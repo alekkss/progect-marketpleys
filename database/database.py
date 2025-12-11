@@ -5,6 +5,10 @@ import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, List
 import os
+import sys
+from pathlib import Path
+from utils.logger_config import setup_logger
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 class Database:
     def __init__(self, db_path: str = "marketplace_sync.db"):

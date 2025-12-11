@@ -6,11 +6,17 @@ import re
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter, column_index_from_string
 from typing import Dict, List, Tuple, Optional
-from config import FILE_CONFIGS, is_excluded_column
-from logger_config import setup_logger  # ДОБАВЬТЕ ЭТУ СТРОКУ
+from utils.excel_reader import ExcelReader
+from utils.excel_writer import ExcelWriter
+from config.config import FILE_CONFIGS, is_excluded_column
+from services.ai_comparator import AIComparator
+from utils.logger_config import setup_logger
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Создаем глобальный логгер
-logger = setup_logger('data_sync')  # ДОБАВЬТЕ ЭТУ СТРОКУ
+logger = setup_logger('data_sync')  
 
 
 class DataSynchronizer:

@@ -5,7 +5,7 @@ from openai import OpenAI
 import json
 import re
 from typing import List, Dict, Set, Optional
-from config import (
+from config.config import (
     OPENROUTER_API_KEY, 
     OPENROUTER_BASE_URL, 
     AI_MODEL, 
@@ -13,7 +13,11 @@ from config import (
     MANDATORY_MATCHES,
     is_excluded_column
 )
-from excel_reader import ExcelReader
+from utils.logger_config import setup_logger
+from utils.excel_reader import ExcelReader
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 class AIComparator:

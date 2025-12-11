@@ -5,7 +5,11 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from typing import Dict, List
-from config import FILE_CONFIGS
+from config.config import FILE_CONFIGS
+from utils.logger_config import setup_logger
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 class ExcelWriter:

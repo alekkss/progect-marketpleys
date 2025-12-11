@@ -12,14 +12,18 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import FILE_CONFIGS, TELEGRAM_BOT_TOKEN
-from excel_reader import ExcelReader
-from ai_comparator import AIComparator
-from excel_writer import ExcelWriter
-from data_synchronizer import DataSynchronizer
-from database import Database
+from config.config import FILE_CONFIGS, TELEGRAM_BOT_TOKEN
+from utils.excel_reader import ExcelReader
+from services.ai_comparator import AIComparator
+from utils.excel_writer import ExcelWriter
+from services.data_synchronizer import DataSynchronizer
+from database.database import Database
 import logging
-from logger_config import setup_logger
+from utils.logger_config import setup_logger
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 logger = setup_logger('bot')
 

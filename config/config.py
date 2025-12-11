@@ -5,6 +5,9 @@
 import os
 from typing import Dict, List, Any
 from dotenv import load_dotenv
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Загрузка переменных окружения
 load_dotenv()
