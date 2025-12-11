@@ -15,7 +15,8 @@ from bot.keyboards import (
     get_cancel_keyboard,
     get_edit_column_keyboard,
     get_back_to_edit_keyboard,
-    get_schema_list_keyboard
+    get_schema_list_keyboard,
+    get_edit_match_menu_keyboard
 )
 from bot.storage import user_schemas, db
 from bot.utils import download_file
@@ -259,15 +260,41 @@ async def handle_edit_validation_file(message: types.Message, state: FSMContext,
             if text:
                 await message.answer(text)
             
-            await state.set_state(SchemaStates.entering_match_number)
+            # ИЗМЕНЕНО: Показываем меню с выбором действия
+            from bot.keyboards import get_edit_match_menu_keyboard
             await message.answer(
-                f"Введи номер сопоставления для редактирования (1-{len(matches)}):",
-                reply_markup=get_cancel_keyboard()
+                "Выбери действие:",
+                reply_markup=get_edit_match_menu_keyboard()
             )
             
         except Exception as e:
             await message.answer(f"❌ Ошибка чтения файлов: {str(e)}")
             await edit_schema_start(message, state)
+
+async def edit_action_selected(message: types.Message, state: FSMContext):
+    """Выбор действия: изменить или добавить сопоставление"""
+    if message.text == "❌ Отмена":
+        await edit_schema_start(message, state)
+        return
+    
+    if message.text == "✏️ Изменить сопоставление":
+        # Переход к изменению существующего
+        data = await state.get_data()
+        matches = data.get('edit_matches', [])
+        
+        await state.set_state(SchemaStates.entering_match_number)
+        await message.answer(
+            f"Введи номер сопоставления для редактирования (1-{len(matches)}):",
+            reply_markup=get_cancel_keyboard()
+        )
+    
+    elif message.text == "➕ Добавить сопоставление":
+        # Переход к добавлению нового
+        await add_new_match_start(message, state)
+    
+    else:
+        await message.answer("❌ Неизвестная команда")
+
 
 
 
@@ -492,6 +519,262 @@ async def delete_match_confirm(message: types.Message, state: FSMContext):
     # Возвращаемся к меню редактирования
     await edit_schema_start(message, state)
 
+# ===== ДОБАВЛЕНИЕ НОВОГО СОПОСТАВЛЕНИЯ =====
+
+async def add_new_match_start(message: types.Message, state: FSMContext):
+    """Начало добавления нового сопоставления"""
+    data = await state.get_data()
+    available_columns = data.get('available_columns', {})
+    wb_columns = available_columns.get('wildberries', [])
+    
+    if not wb_columns:
+        await message.answer("❌ Не удалось загрузить столбцы WB")
+        return
+    
+    # Показываем список доступных столбцов WB
+    text = f"📋 Доступные столбцы WB ({len(wb_columns)}):\n\n"
+    
+    for i, col in enumerate(wb_columns, 1):
+        text += f"{i}. {col}\n"
+        
+        if i % 30 == 0:
+            await message.answer(text)
+            text = ""
+    
+    if text:
+        await message.answer(text)
+    
+    await state.set_state(SchemaStates.selecting_wb_column)
+    await message.answer(
+        f"Шаг 1/3: Выбери столбец WB\n\n"
+        f"Введи название или номер (1-{len(wb_columns)}):",
+        reply_markup=get_cancel_keyboard()
+    )
+
+
+async def wb_column_selected(message: types.Message, state: FSMContext):
+    """Столбец WB выбран"""
+    if message.text == "❌ Отмена":
+        await edit_schema_start(message, state)
+        return
+    
+    data = await state.get_data()
+    available_columns = data.get('available_columns', {})
+    wb_columns = available_columns.get('wildberries', [])
+    
+    # Валидация выбора
+    wb_value = None
+    user_input = message.text.strip()
+    
+    try:
+        col_number = int(user_input)
+        if 1 <= col_number <= len(wb_columns):
+            wb_value = wb_columns[col_number - 1]
+    except ValueError:
+        if user_input in wb_columns:
+            wb_value = user_input
+        else:
+            user_lower = user_input.lower()
+            for col in wb_columns:
+                if col.lower() == user_lower:
+                    wb_value = col
+                    break
+    
+    if not wb_value:
+        await message.answer(
+            f"❌ Столбец '{user_input}' не найден!\n\n"
+            f"Введи точное название или номер из списка."
+        )
+        return
+    
+    # Сохраняем выбор
+    await state.update_data(new_match_wb=wb_value)
+    
+    # Переходим к Ozon
+    ozon_columns = available_columns.get('ozon', [])
+    
+    text = f"✅ WB: {wb_value}\n\n"
+    text += f"📋 Доступные столбцы Ozon ({len(ozon_columns)}):\n\n"
+    
+    for i, col in enumerate(ozon_columns, 1):
+        text += f"{i}. {col}\n"
+        
+        if i % 30 == 0:
+            await message.answer(text)
+            text = ""
+    
+    if text:
+        await message.answer(text)
+    
+    await state.set_state(SchemaStates.selecting_ozon_column)
+    await message.answer(
+        f"Шаг 2/3: Выбери столбец Ozon\n\n"
+        f"Введи название или номер (1-{len(ozon_columns)}):",
+        reply_markup=get_cancel_keyboard()
+    )
+
+
+async def ozon_column_selected(message: types.Message, state: FSMContext):
+    """Столбец Ozon выбран"""
+    if message.text == "❌ Отмена":
+        await edit_schema_start(message, state)
+        return
+    
+    data = await state.get_data()
+    available_columns = data.get('available_columns', {})
+    ozon_columns = available_columns.get('ozon', [])
+    
+    # Валидация выбора
+    ozon_value = None
+    user_input = message.text.strip()
+    
+    try:
+        col_number = int(user_input)
+        if 1 <= col_number <= len(ozon_columns):
+            ozon_value = ozon_columns[col_number - 1]
+    except ValueError:
+        if user_input in ozon_columns:
+            ozon_value = user_input
+        else:
+            user_lower = user_input.lower()
+            for col in ozon_columns:
+                if col.lower() == user_lower:
+                    ozon_value = col
+                    break
+    
+    if not ozon_value:
+        await message.answer(
+            f"❌ Столбец '{user_input}' не найден!\n\n"
+            f"Введи точное название или номер из списка."
+        )
+        return
+    
+    # Сохраняем выбор
+    await state.update_data(new_match_ozon=ozon_value)
+    
+    # Переходим к Яндекс
+    yandex_columns = available_columns.get('yandex', [])
+    
+    text = f"✅ WB: {data.get('new_match_wb')}\n"
+    text += f"✅ Ozon: {ozon_value}\n\n"
+    text += f"📋 Доступные столбцы Яндекс ({len(yandex_columns)}):\n\n"
+    
+    for i, col in enumerate(yandex_columns, 1):
+        text += f"{i}. {col}\n"
+        
+        if i % 30 == 0:
+            await message.answer(text)
+            text = ""
+    
+    if text:
+        await message.answer(text)
+    
+    await state.set_state(SchemaStates.selecting_yandex_column)
+    await message.answer(
+        f"Шаг 3/3: Выбери столбец Яндекс\n\n"
+        f"Введи название или номер (1-{len(yandex_columns)}):",
+        reply_markup=get_cancel_keyboard()
+    )
+
+
+async def yandex_column_selected(message: types.Message, state: FSMContext):
+    """Столбец Яндекс выбран, сохраняем сопоставление"""
+    if message.text == "❌ Отмена":
+        await edit_schema_start(message, state)
+        return
+    
+    data = await state.get_data()
+    available_columns = data.get('available_columns', {})
+    yandex_columns = available_columns.get('yandex', [])
+    
+    # Валидация выбора
+    yandex_value = None
+    user_input = message.text.strip()
+    
+    try:
+        col_number = int(user_input)
+        if 1 <= col_number <= len(yandex_columns):
+            yandex_value = yandex_columns[col_number - 1]
+    except ValueError:
+        if user_input in yandex_columns:
+            yandex_value = user_input
+        else:
+            user_lower = user_input.lower()
+            for col in yandex_columns:
+                if col.lower() == user_lower:
+                    yandex_value = col
+                    break
+    
+    if not yandex_value:
+        await message.answer(
+            f"❌ Столбец '{user_input}' не найден!\n\n"
+            f"Введи точное название или номер из списка."
+        )
+        return
+    
+    # Собираем новое сопоставление
+    wb_value = data.get('new_match_wb')
+    ozon_value = data.get('new_match_ozon')
+    
+    new_match = {
+        'column_1': wb_value,
+        'column_2': ozon_value,
+        'column_3': yandex_value,
+        'confidence': 1.0,  # Ручное сопоставление = 100%
+        'description': 'Добавлено вручную'
+    }
+    
+    # Проверяем дубликаты
+    schema_id = data.get('edit_schema_id')
+    schema_name = data.get('edit_schema_name')
+    matches = data.get('edit_matches', [])
+    
+    is_duplicate = False
+    for match in matches:
+        if (match.get('column_1') == wb_value and 
+            match.get('column_2') == ozon_value and 
+            match.get('column_3') == yandex_value):
+            is_duplicate = True
+            break
+    
+    if is_duplicate:
+        await message.answer(
+            "⚠️ Такое сопоставление уже существует!\n\n"
+            f"WB: {wb_value}\n"
+            f"Ozon: {ozon_value}\n"
+            f"Яндекс: {yandex_value}"
+        )
+        await edit_schema_start(message, state)
+        return
+    
+    # Добавляем новое сопоставление
+    matches.append(new_match)
+    
+    # Сохраняем в БД
+    matches_data = {'matches_all_three': matches}
+    db.save_schema_matches(schema_id, matches_data)
+    
+    # Очищаем временные данные
+    user_id = message.from_user.id
+    if user_id in user_schemas:
+        user_schemas[user_id] = {}
+    
+    await state.clear()
+    
+    text = f"✅ Новое сопоставление добавлено!\n\n"
+    text += f"📋 Схема: {schema_name}\n"
+    text += f"📊 Всего сопоставлений: {len(matches)}\n\n"
+    text += f"Добавлено:\n"
+    text += f"🔹 WB: {wb_value}\n"
+    text += f"🔸 Ozon: {ozon_value}\n"
+    text += f"🔹 Яндекс: {yandex_value}"
+    
+    await message.answer(text)
+    
+    # Возвращаемся к меню редактирования
+    await edit_schema_start(message, state)
+
+
 
 def register_schema_edit_handlers(dp, bot):
     """Регистрация обработчиков редактирования схем"""
@@ -503,11 +786,21 @@ def register_schema_edit_handlers(dp, bot):
     dp.message.register(view_matches_start, F.text == "👁 Просмотреть текущие сопоставления")
     dp.message.register(show_schema_matches, SchemaStates.selecting_schema_to_view)
     
-    # Редактирование
+    # Редактирование - выбор схемы и загрузка файлов
     dp.message.register(edit_match_start, F.text == "✏️ Изменить сопоставление")
     dp.message.register(schema_selected_for_edit, SchemaStates.selecting_schema_to_edit)
     dp.message.register(partial(handle_edit_validation_file, bot=bot), SchemaStates.waiting_edit_files, F.document)
+    
+    # НОВОЕ: Выбор действия после загрузки файлов
+    dp.message.register(edit_action_selected, SchemaStates.waiting_edit_files, F.text)
+    
+    # Изменение существующего сопоставления
     dp.message.register(match_number_entered, SchemaStates.entering_match_number)
     dp.message.register(column_selected_for_edit, SchemaStates.selecting_column_to_edit)
     dp.message.register(new_column_value_entered, SchemaStates.selecting_new_column_value)
+    
+    # НОВОЕ: Добавление нового сопоставления
+    dp.message.register(wb_column_selected, SchemaStates.selecting_wb_column)
+    dp.message.register(ozon_column_selected, SchemaStates.selecting_ozon_column)
+    dp.message.register(yandex_column_selected, SchemaStates.selecting_yandex_column)
 

@@ -37,3 +37,9 @@ class SchemaStates(StatesGroup):
     entering_match_number = State()
     selecting_column_to_edit = State()
     selecting_new_column_value = State()
+
+    # НОВОЕ: Добавление нового сопоставления
+    adding_new_match = State()              # Режим добавления
+    selecting_wb_column = State()           # Выбор столбца WB
+    selecting_ozon_column = State()         # Выбор столбца Ozon
+    selecting_yandex_column = State()       # Выбор столбца Яндекс

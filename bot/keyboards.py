@@ -99,6 +99,18 @@ def get_back_to_edit_keyboard():
         resize_keyboard=True
     )
 
+def get_edit_match_menu_keyboard():
+    """Меню после загрузки файлов для редактирования"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="✏️ Изменить сопоставление")],
+            [KeyboardButton(text="➕ Добавить сопоставление")],  # НОВАЯ КНОПКА
+            [KeyboardButton(text="❌ Отмена")]
+        ],
+        resize_keyboard=True
+    )
+
+
 
 def get_schema_list_keyboard(schemas):
     """Клавиатура со списком схем"""
