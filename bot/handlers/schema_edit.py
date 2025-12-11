@@ -260,8 +260,9 @@ async def handle_edit_validation_file(message: types.Message, state: FSMContext,
             if text:
                 await message.answer(text)
             
-            # ИЗМЕНЕНО: Показываем меню с выбором действия
+            # ИЗМЕНЕНО: Переходим в состояние выбора действия
             from bot.keyboards import get_edit_match_menu_keyboard
+            await state.set_state(SchemaStates.choosing_edit_action)  # ВАЖНО!
             await message.answer(
                 "Выбери действие:",
                 reply_markup=get_edit_match_menu_keyboard()
@@ -274,12 +275,17 @@ async def handle_edit_validation_file(message: types.Message, state: FSMContext,
 async def edit_action_selected(message: types.Message, state: FSMContext):
     """Выбор действия: изменить или добавить сопоставление"""
     if message.text == "❌ Отмена":
+        # Очищаем временные данные
+        user_id = message.from_user.id
+        if user_id in user_schemas:
+            user_schemas[user_id] = {}
         await edit_schema_start(message, state)
         return
     
+    data = await state.get_data()
+    
     if message.text == "✏️ Изменить сопоставление":
         # Переход к изменению существующего
-        data = await state.get_data()
         matches = data.get('edit_matches', [])
         
         await state.set_state(SchemaStates.entering_match_number)
@@ -293,8 +299,7 @@ async def edit_action_selected(message: types.Message, state: FSMContext):
         await add_new_match_start(message, state)
     
     else:
-        await message.answer("❌ Неизвестная команда")
-
+        await message.answer("❌ Неизвестная команда. Используй кнопки ниже.")
 
 
 
@@ -786,21 +791,22 @@ def register_schema_edit_handlers(dp, bot):
     dp.message.register(view_matches_start, F.text == "👁 Просмотреть текущие сопоставления")
     dp.message.register(show_schema_matches, SchemaStates.selecting_schema_to_view)
     
-    # Редактирование - выбор схемы и загрузка файлов
+    # Редактирование - выбор схемы
     dp.message.register(edit_match_start, F.text == "✏️ Изменить сопоставление")
     dp.message.register(schema_selected_for_edit, SchemaStates.selecting_schema_to_edit)
+    
+    # Загрузка файлов для валидации
     dp.message.register(partial(handle_edit_validation_file, bot=bot), SchemaStates.waiting_edit_files, F.document)
     
-    # НОВОЕ: Выбор действия после загрузки файлов
-    dp.message.register(edit_action_selected, SchemaStates.waiting_edit_files, F.text)
+    # ВАЖНО: Выбор действия ПОСЛЕ загрузки файлов (в специальном состоянии)
+    dp.message.register(edit_action_selected, SchemaStates.choosing_edit_action)
     
     # Изменение существующего сопоставления
     dp.message.register(match_number_entered, SchemaStates.entering_match_number)
     dp.message.register(column_selected_for_edit, SchemaStates.selecting_column_to_edit)
     dp.message.register(new_column_value_entered, SchemaStates.selecting_new_column_value)
     
-    # НОВОЕ: Добавление нового сопоставления
+    # Добавление нового сопоставления
     dp.message.register(wb_column_selected, SchemaStates.selecting_wb_column)
     dp.message.register(ozon_column_selected, SchemaStates.selecting_ozon_column)
     dp.message.register(yandex_column_selected, SchemaStates.selecting_yandex_column)
-

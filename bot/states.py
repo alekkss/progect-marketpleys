@@ -34,12 +34,14 @@ class SchemaStates(StatesGroup):
     # Редактирование
     selecting_schema_to_edit = State()
     waiting_edit_files = State()
+    choosing_edit_action = State()          # НОВОЕ: Выбор действия после загрузки файлов
     entering_match_number = State()
     selecting_column_to_edit = State()
     selecting_new_column_value = State()
+    
+    # Добавление нового сопоставления
+    adding_new_match = State()
+    selecting_wb_column = State()
+    selecting_ozon_column = State()
+    selecting_yandex_column = State()
 
-    # НОВОЕ: Добавление нового сопоставления
-    adding_new_match = State()              # Режим добавления
-    selecting_wb_column = State()           # Выбор столбца WB
-    selecting_ozon_column = State()         # Выбор столбца Ozon
-    selecting_yandex_column = State()       # Выбор столбца Яндекс
