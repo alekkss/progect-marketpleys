@@ -87,7 +87,11 @@ async def handle_schema_file(message: types.Message, state: FSMContext, bot):
     await message.answer(f"✅ {marketplace.upper()} ({len(user_schemas[user_id])}/3)")
     
     if len(user_schemas[user_id]) == 3:
-        # НОВОЕ: Устанавливаем флаг
+        # КРИТИЧНО: Двойная проверка флага
+        data = await state.get_data()
+        if data.get('files_processed'):
+            return
+        
         await state.update_data(files_processed=True)
         
         await message.answer(

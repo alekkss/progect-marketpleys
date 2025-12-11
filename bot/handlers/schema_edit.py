@@ -218,8 +218,13 @@ async def handle_edit_validation_file(message: types.Message, state: FSMContext,
     user_schemas[user_id][marketplace] = file_path
     await message.answer(f"✅ {marketplace.upper()} ({len(user_schemas[user_id])}/3)")
     
+    # ВАЖНО: Проверяем ровно == 3 и ЕЩЁ РАЗ проверяем флаг
     if len(user_schemas[user_id]) == 3:
-        # НОВОЕ: Устанавливаем флаг, что файлы обработаны
+        # КРИТИЧНО: Сразу устанавливаем флаг ДО любой обработки
+        data = await state.get_data()
+        if data.get('files_processed'):
+            return  # Другой обработчик уже начал обработку
+        
         await state.update_data(files_processed=True)
         
         # Читаем столбцы из файлов
@@ -239,30 +244,53 @@ async def handle_edit_validation_file(message: types.Message, state: FSMContext,
             await state.update_data(available_columns=available_columns)
             
             # Показываем список сопоставлений
+            data = await state.get_data()  # Перечитываем data
             matches = data.get('edit_matches', [])
             schema_name = data.get('edit_schema_name')
             
-            text = f"✅ Файлы загружены!\n\n"
-            text += f"📋 Схема: {schema_name}\n"
-            text += f"📊 Всего сопоставлений: {len(matches)}\n\n"
+            # Формируем ОДИН большой текст
+            text_parts = []
+            text_parts.append(f"✅ Файлы загружены!\n\n")
+            text_parts.append(f"📋 Схема: {schema_name}\n")
+            text_parts.append(f"📊 Всего сопоставлений: {len(matches)}\n\n")
             
             for i, match in enumerate(matches, 1):
                 wb_col = match.get('column_1', '—')
                 ozon_col = match.get('column_2', '—')
                 yandex_col = match.get('column_3', '—')
                 
-                text += f"#{i}: {wb_col} | {ozon_col} | {yandex_col}\n"
+                text_parts.append(f"#{i}: {wb_col} | {ozon_col} | {yandex_col}\n")
+            
+            # Объединяем весь текст
+            full_text = ''.join(text_parts)
+            
+            # Разбиваем на части по 3500 символов
+            max_length = 3500
+            if len(full_text) <= max_length:
+                await message.answer(full_text)
+            else:
+                # Разбиваем на части
+                parts = []
+                current_part = ""
+                for line in full_text.split('\n'):
+                    if len(current_part) + len(line) + 1 > max_length:
+                        parts.append(current_part)
+                        current_part = line + '\n'
+                    else:
+                        current_part += line + '\n'
                 
-                if i % 20 == 0:
-                    await message.answer(text)
-                    text = ""
+                if current_part:
+                    parts.append(current_part)
+                
+                # Отправляем все части
+                for part in parts:
+                    await message.answer(part)
             
-            if text:
-                await message.answer(text)
-            
-            # ИЗМЕНЕНО: Переходим в состояние выбора действия
+            # ВАЖНО: Переходим в состояние выбора действия
             from bot.keyboards import get_edit_match_menu_keyboard
-            await state.set_state(SchemaStates.choosing_edit_action)  # ВАЖНО!
+            await state.set_state(SchemaStates.choosing_edit_action)
+            
+            # ОДНО сообщение с меню
             await message.answer(
                 "Выбери действие:",
                 reply_markup=get_edit_match_menu_keyboard()
