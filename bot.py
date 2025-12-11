@@ -40,6 +40,7 @@ class SchemaStates(StatesGroup):
     selecting_schema_to_view = State()       # Для просмотра сопоставлений
     viewing_schema_matches = State()          # Для навигации по сопоставлениям
     selecting_schema_to_edit = State()        # Для выбора схемы для редактирования
+    waiting_edit_files = State()
     entering_match_number = State()           # Ввод номера сопоставления
     selecting_column_to_edit = State()        # Выбор какой столбец менять
     selecting_new_column_value = State()      # Выбор нового значения
@@ -489,7 +490,7 @@ def create_bot():
     
     @dp.message(SchemaStates.selecting_schema_to_edit)
     async def schema_selected_for_edit(message: types.Message, state: FSMContext):
-        """Схема выбрана, запрашиваем номер сопоставления"""
+        """Схема выбрана, запрашиваем файлы для валидации столбцов"""
         if message.text == "❌ Отмена":
             await edit_schema_start(message, state)
             return
@@ -524,35 +525,105 @@ def create_bot():
             edit_matches=matches
         )
         
-        # Показываем краткий список
-        text = f"📋 Схема: {schema_name}\n"
-        text += f"📊 Всего сопоставлений: {len(matches)}\n\n"
+        # НОВОЕ: Запрашиваем загрузку файлов для валидации
+        user_schemas[user_id] = {}
         
-        for i, match in enumerate(matches, 1):
-            wb_col = match.get('column_1', '—')
-            ozon_col = match.get('column_2', '—')
-            yandex_col = match.get('column_3', '—')
-            
-            text += f"#{i}: {wb_col} | {ozon_col} | {yandex_col}\n"
-            
-            # Если список длинный, разбиваем
-            if i % 20 == 0:
-                await message.answer(text)
-                text = ""
-        
-        if text:
-            await message.answer(text)
-        
-        keyboard = ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="❌ Отмена")]],
-            resize_keyboard=True
-        )
-        
-        await state.set_state(SchemaStates.entering_match_number)
         await message.answer(
-            f"Введи номер сопоставления для редактирования (1-{len(matches)}):",
-            reply_markup=keyboard
+            f"📋 Схема '{schema_name}' выбрана\n\n"
+            "📤 Для валидации столбцов загрузи 3 актуальных файла Excel\n"
+            "(wb, ozon, yandex)",
+            reply_markup=ReplyKeyboardRemove()
         )
+        
+        await state.set_state(SchemaStates.waiting_edit_files)
+    
+    @dp.message(SchemaStates.waiting_edit_files, F.document)
+    async def handle_edit_validation_file(message: types.Message, state: FSMContext):
+        """Загрузка файлов для валидации при редактировании"""
+        user_id = message.from_user.id
+        
+        if user_id not in user_schemas:
+            user_schemas[user_id] = {}
+        
+        file = await bot.get_file(message.document.file_id)
+        file_name = message.document.file_name
+        
+        os.makedirs(f"uploads/{user_id}", exist_ok=True)
+        file_path = f"uploads/{user_id}/{file_name}"
+        await bot.download_file(file.file_path, file_path)
+        
+        fn = file_name.lower()
+        if 'wb' in fn or 'wildberries' in fn:
+            marketplace = 'wildberries'
+        elif 'ozon' in fn or 'озон' in fn:
+            marketplace = 'ozon'
+        elif 'yandex' in fn or 'яндекс' in fn or 'market' in fn:
+            marketplace = 'yandex'
+        else:
+            await message.answer("❌ Переименуй файл (добавь wb/ozon/yandex)")
+            return
+        
+        if marketplace in user_schemas[user_id]:
+            await message.answer(f"⚠️ {marketplace.upper()} уже загружен")
+            return
+            
+        user_schemas[user_id][marketplace] = file_path
+        await message.answer(f"✅ {marketplace.upper()} ({len(user_schemas[user_id])}/3)")
+        
+        if len(user_schemas[user_id]) == 3:
+            # Читаем столбцы из файлов
+            try:
+                reader = ExcelReader()
+                available_columns = {}
+                
+                for marketplace, file_path in user_schemas[user_id].items():
+                    config = FILE_CONFIGS[marketplace]
+                    available_columns[marketplace] = reader.get_column_names(
+                        file_path,
+                        config['sheet_name'],
+                        config['header_row']
+                    )
+                
+                # Сохраняем доступные столбцы
+                await state.update_data(available_columns=available_columns)
+                
+                # Теперь показываем список сопоставлений
+                data = await state.get_data()
+                matches = data.get('edit_matches', [])
+                schema_name = data.get('edit_schema_name')
+                
+                text = f"✅ Файлы загружены!\n\n"
+                text += f"📋 Схема: {schema_name}\n"
+                text += f"📊 Всего сопоставлений: {len(matches)}\n\n"
+                
+                for i, match in enumerate(matches, 1):
+                    wb_col = match.get('column_1', '—')
+                    ozon_col = match.get('column_2', '—')
+                    yandex_col = match.get('column_3', '—')
+                    
+                    text += f"#{i}: {wb_col} | {ozon_col} | {yandex_col}\n"
+                    
+                    if i % 20 == 0:
+                        await message.answer(text)
+                        text = ""
+                
+                if text:
+                    await message.answer(text)
+                
+                keyboard = ReplyKeyboardMarkup(
+                    keyboard=[[KeyboardButton(text="❌ Отмена")]],
+                    resize_keyboard=True
+                )
+                
+                await state.set_state(SchemaStates.entering_match_number)
+                await message.answer(
+                    f"Введи номер сопоставления для редактирования (1-{len(matches)}):",
+                    reply_markup=keyboard
+                )
+                
+            except Exception as e:
+                await message.answer(f"❌ Ошибка чтения файлов: {str(e)}")
+                await edit_schema_start(message, state)
     
     @dp.message(SchemaStates.entering_match_number)
     async def match_number_entered(message: types.Message, state: FSMContext):
@@ -623,7 +694,6 @@ def create_bot():
             await edit_schema_start(message, state)
             return
         
-        # Обработка удаления
         if message.text == "🗑 Удалить сопоставление":
             await delete_match_confirm(message, state)
             return
@@ -645,17 +715,36 @@ def create_bot():
             await message.answer("❌ Неизвестная команда")
             return
         
+        data = await state.get_data()
+        available_columns = data.get('available_columns', {})
+        columns_list = available_columns.get(marketplace, [])
+        
+        if not columns_list:
+            await message.answer("❌ Не удалось загрузить список столбцов")
+            return
+        
         await state.update_data(
             edit_marketplace=marketplace,
             edit_column_key=column_key,
             edit_display_name=display_name
         )
         
-        # Загружаем доступные столбцы из последних файлов схемы
-        # Или можно показать поле для ручного ввода
+        # НОВОЕ: Показываем список доступных столбцов
+        text = f"📋 Доступные столбцы {display_name} ({len(columns_list)}):\n\n"
+        
+        for i, col in enumerate(columns_list, 1):
+            text += f"{i}. {col}\n"
+            
+            # Telegram имеет лимит, разбиваем на части
+            if i % 30 == 0:
+                await message.answer(text)
+                text = ""
+        
+        if text:
+            await message.answer(text)
+        
         await message.answer(
-            f"Введи новое название столбца для {display_name}:\n\n"
-            f"(Можешь ввести вручную или скопировать из Excel)",
+            f"Введи название столбца из списка выше или номер (1-{len(columns_list)}):",
             reply_markup=ReplyKeyboardMarkup(
                 keyboard=[[KeyboardButton(text="❌ Отмена")]],
                 resize_keyboard=True
@@ -666,18 +755,50 @@ def create_bot():
     
     @dp.message(SchemaStates.selecting_new_column_value)
     async def new_column_value_entered(message: types.Message, state: FSMContext):
-        """Новое значение введено, сохраняем изменения"""
+        """Новое значение введено, валидируем и сохраняем"""
         if message.text == "❌ Отмена":
             await edit_schema_start(message, state)
             return
         
-        new_value = message.text.strip()
+        user_input = message.text.strip()
         
-        if not new_value:
+        if not user_input:
             await message.answer("❌ Название столбца не может быть пустым!")
             return
         
         data = await state.get_data()
+        marketplace = data.get('edit_marketplace')
+        available_columns = data.get('available_columns', {})
+        columns_list = available_columns.get(marketplace, [])
+        
+        # НОВОЕ: Валидация
+        new_value = None
+        
+        # Проверяем, может это номер
+        try:
+            col_number = int(user_input)
+            if 1 <= col_number <= len(columns_list):
+                new_value = columns_list[col_number - 1]
+        except ValueError:
+            # Не номер, ищем по точному совпадению
+            if user_input in columns_list:
+                new_value = user_input
+            else:
+                # Ищем похожее (case-insensitive)
+                user_lower = user_input.lower()
+                for col in columns_list:
+                    if col.lower() == user_lower:
+                        new_value = col
+                        break
+        
+        if not new_value:
+            await message.answer(
+                f"❌ Столбец '{user_input}' не найден в шаблоне {data.get('edit_display_name')}!\n\n"
+                f"Введи точное название или номер из списка."
+            )
+            return
+        
+        # Продолжаем с валидированным значением
         schema_id = data.get('edit_schema_id')
         schema_name = data.get('edit_schema_name')
         matches = data.get('edit_matches', [])
@@ -692,6 +813,11 @@ def create_bot():
         # Сохраняем в БД
         matches_data = {'matches_all_three': matches}
         db.save_schema_matches(schema_id, matches_data)
+        
+        # Очищаем временные файлы
+        user_id = message.from_user.id
+        if user_id in user_schemas:
+            user_schemas[user_id] = {}
         
         await state.clear()
         
