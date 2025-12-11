@@ -37,6 +37,8 @@ class SchemaStates(StatesGroup):
     selecting_schema_to_update = State()
     waiting_update_files = State()
     selecting_schema_to_delete = State()
+    selecting_schema_to_view = State()  # Для выбора схемы для просмотра
+    viewing_schema_matches = State()     # Для навигации по сопоставлениям
 
 user_files = {}
 user_schemas = {}  # Временное хранилище для создания схем
@@ -326,19 +328,134 @@ def create_bot():
     
     @dp.message(F.text == "✏️ Редактировать схему")
     async def edit_schema_start(message: types.Message, state: FSMContext):
-        """
-        Заглушка для функции редактирования схемы.
-        TODO: Реализовать функционал редактирования существующих сопоставлений.
-        """
-        await message.answer(
-            "🚧 Функция редактирования схемы\n\n"
-            "В разработке...\n\n"
-            "Здесь ты сможешь:\n"
-            "• Просмотреть текущие сопоставления\n"
-            "• Изменить конкретные связки столбцов\n"
-            "• Удалить ненужные сопоставления\n"
-            "• Добавить новые вручную"
+        """Меню редактирования схемы"""
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="👁 Просмотреть текущие сопоставления")],
+                [KeyboardButton(text="◀️ Назад")]
+            ],
+            resize_keyboard=True
         )
+        
+        await message.answer(
+            "Редактирование схемы:\n\n"
+            "Выбери действие:",
+            reply_markup=keyboard
+        )
+    
+    @dp.message(F.text == "👁 Просмотреть текущие сопоставления")
+    async def view_matches_start(message: types.Message, state: FSMContext):
+        """Выбор схемы для просмотра сопоставлений"""
+        user_id = message.from_user.id
+        schemas = db.get_user_schemas(user_id)
+        
+        if not schemas:
+            await message.answer("❌ У тебя нет схем!")
+            return
+        
+        keyboard_buttons = []
+        for schema in schemas:
+            if schema.get('name'):
+                keyboard_buttons.append([KeyboardButton(text=schema['name'])])
+        
+        if not keyboard_buttons:
+            await message.answer("❌ У тебя нет валидных схем!")
+            return
+        
+        keyboard_buttons.append([KeyboardButton(text="❌ Отмена")])
+        
+        keyboard = ReplyKeyboardMarkup(keyboard=keyboard_buttons, resize_keyboard=True)
+        
+        await state.set_state(SchemaStates.selecting_schema_to_view)
+        await message.answer("Выбери схему для просмотра:", reply_markup=keyboard)
+
+
+    @dp.message(SchemaStates.selecting_schema_to_view)
+    async def show_schema_matches(message: types.Message, state: FSMContext):
+        """Отображение сопоставлений выбранной схемы"""
+        if message.text == "❌ Отмена":
+            await edit_schema_start(message, state)
+            return
+        
+        user_id = message.from_user.id
+        schema = db.get_schema(user_id, message.text)
+        
+        if not schema:
+            await message.answer("❌ Схема не найдена")
+            return
+        
+        schema_id = schema['id']
+        schema_name = schema['name']
+        
+        # Получаем сопоставления из БД
+        matches_data = db.get_schema_matches(schema_id)
+        matches = matches_data.get('matches_all_three', [])
+        
+        if not matches:
+            await state.clear()
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="✏️ Редактировать схему")],
+                    [KeyboardButton(text="◀️ Назад")]
+                ],
+                resize_keyboard=True
+            )
+            await message.answer(
+                f"📋 Схема '{schema_name}'\n\n"
+                "⚠️ Нет сопоставлений",
+                reply_markup=keyboard
+            )
+            return
+        
+        # Формируем красивый вывод
+        text = f"📋 Схема: {schema_name}\n"
+        text += f"📊 Всего сопоставлений: {len(matches)}\n\n"
+        text += "─" * 40 + "\n\n"
+        
+        for i, match in enumerate(matches, 1):
+            wb_col = match.get('column_1', '—')
+            ozon_col = match.get('column_2', '—')
+            yandex_col = match.get('column_3', '—')
+            confidence = match.get('confidence', 0)
+            description = match.get('description', '')
+            
+            text += f"#{i}\n"
+            text += f"🔹 WB: {wb_col}\n"
+            text += f"🔸 Ozon: {ozon_col}\n"
+            text += f"🔹 Яндекс: {yandex_col}\n"
+            text += f"📈 Уверенность: {confidence:.0%}\n"
+            
+            if description:
+                text += f"💬 {description}\n"
+            
+            text += "\n"
+            
+            # Telegram имеет лимит 4096 символов на сообщение
+            # Разбиваем на части если слишком длинное
+            if len(text) > 3500:  # Оставляем запас
+                await message.answer(text)
+                text = ""
+        
+        # Отправляем остаток
+        if text:
+            await message.answer(text)
+        
+        await state.clear()
+        
+        # Возвращаемся к меню редактирования
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="✏️ Редактировать схему")],
+                [KeyboardButton(text="◀️ Назад")]
+            ],
+            resize_keyboard=True
+        )
+        
+        await message.answer(
+            "✅ Просмотр завершен",
+            reply_markup=keyboard
+        )
+
     
 
     
