@@ -89,6 +89,11 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
     if user_id not in user_files:
         user_files[user_id] = {}
     
+    # НОВОЕ: Проверяем, не обработали ли мы уже все файлы
+    data = await state.get_data()
+    if data.get('files_processed'):
+        return  # Уже обработали, игнорируем дубликаты
+    
     file_path, file_name, marketplace = await download_file(bot, message, user_id)
     
     if not marketplace:
@@ -103,6 +108,9 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
     await message.answer(f"✅ {marketplace.upper()} ({len(user_files[user_id])}/3)")
     
     if len(user_files[user_id]) == 3:
+        # НОВОЕ: Устанавливаем флаг
+        await state.update_data(files_processed=True)
+        
         await message.answer(
             "✅ Все файлы загружены!",
             reply_markup=get_process_keyboard()
@@ -217,7 +225,10 @@ async def process_files(message: types.Message, state: FSMContext, bot):
 
 def register_upload_handlers(dp, bot):
     """Регистрация обработчиков загрузки"""
+    from functools import partial
+    
     dp.message.register(select_schema_for_upload, F.text == "📤 Загрузить файлы")
-    dp.message.register(lambda m, s: schema_selected(m, s, bot), UploadStates.selecting_schema)
-    dp.message.register(lambda m, s: handle_file(m, s, bot), UploadStates.waiting_for_files, F.document)
-    dp.message.register(lambda m, s: process_files(m, s, bot), F.text == "🚀 Обработать")
+    dp.message.register(partial(schema_selected, bot=bot), UploadStates.selecting_schema)
+    dp.message.register(partial(handle_file, bot=bot), UploadStates.waiting_for_files, F.document)
+    dp.message.register(partial(process_files, bot=bot), F.text == "🚀 Обработать")
+

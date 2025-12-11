@@ -68,6 +68,11 @@ async def handle_schema_file(message: types.Message, state: FSMContext, bot):
     if user_id not in user_schemas:
         user_schemas[user_id] = {}
     
+    # НОВОЕ: Проверяем, не обработали ли мы уже все файлы
+    data = await state.get_data()
+    if data.get('files_processed'):
+        return  # Уже обработали, игнорируем дубликаты
+    
     file_path, file_name, marketplace = await download_file(bot, message, user_id)
     
     if not marketplace:
@@ -82,6 +87,9 @@ async def handle_schema_file(message: types.Message, state: FSMContext, bot):
     await message.answer(f"✅ {marketplace.upper()} ({len(user_schemas[user_id])}/3)")
     
     if len(user_schemas[user_id]) == 3:
+        # НОВОЕ: Устанавливаем флаг
+        await state.update_data(files_processed=True)
+        
         await message.answer(
             "✅ Все файлы загружены!",
             reply_markup=get_create_schema_keyboard()
@@ -176,7 +184,9 @@ async def finalize_schema_creation(message: types.Message, state: FSMContext):
 
 def register_schema_create_handlers(dp, bot):
     """Регистрация обработчиков создания схем"""
+    from functools import partial
+    
     dp.message.register(create_schema_start, F.text == "➕ Создать схему")
     dp.message.register(schema_name_entered, SchemaStates.waiting_schema_name)
-    dp.message.register(lambda m, s: handle_schema_file(m, s, bot), SchemaStates.waiting_schema_files, F.document)
+    dp.message.register(partial(handle_schema_file, bot=bot), SchemaStates.waiting_schema_files, F.document)
     dp.message.register(finalize_schema_creation, F.text == "✅ Создать схему")

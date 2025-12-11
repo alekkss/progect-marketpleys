@@ -179,6 +179,8 @@ async def schema_selected_for_edit(message: types.Message, state: FSMContext):
     
     # Запрашиваем загрузку файлов для валидации
     user_schemas[user_id] = {}
+
+    await state.update_data(files_processed=False)
     
     await message.answer(
         f"📋 Схема '{schema_name}' выбрана\n\n"
@@ -197,6 +199,11 @@ async def handle_edit_validation_file(message: types.Message, state: FSMContext,
     if user_id not in user_schemas:
         user_schemas[user_id] = {}
     
+    # НОВОЕ: Проверяем, не обработали ли мы уже все файлы
+    data = await state.get_data()
+    if data.get('files_processed'):
+        return  # Уже обработали, игнорируем дубликаты
+    
     file_path, file_name, marketplace = await download_file(bot, message, user_id)
     
     if not marketplace:
@@ -211,6 +218,9 @@ async def handle_edit_validation_file(message: types.Message, state: FSMContext,
     await message.answer(f"✅ {marketplace.upper()} ({len(user_schemas[user_id])}/3)")
     
     if len(user_schemas[user_id]) == 3:
+        # НОВОЕ: Устанавливаем флаг, что файлы обработаны
+        await state.update_data(files_processed=True)
+        
         # Читаем столбцы из файлов
         try:
             reader = ExcelReader()
@@ -228,7 +238,6 @@ async def handle_edit_validation_file(message: types.Message, state: FSMContext,
             await state.update_data(available_columns=available_columns)
             
             # Показываем список сопоставлений
-            data = await state.get_data()
             matches = data.get('edit_matches', [])
             schema_name = data.get('edit_schema_name')
             
@@ -259,6 +268,7 @@ async def handle_edit_validation_file(message: types.Message, state: FSMContext,
         except Exception as e:
             await message.answer(f"❌ Ошибка чтения файлов: {str(e)}")
             await edit_schema_start(message, state)
+
 
 
 async def match_number_entered(message: types.Message, state: FSMContext):
@@ -485,6 +495,8 @@ async def delete_match_confirm(message: types.Message, state: FSMContext):
 
 def register_schema_edit_handlers(dp, bot):
     """Регистрация обработчиков редактирования схем"""
+    from functools import partial
+    
     dp.message.register(edit_schema_start, F.text == "✏️ Редактировать схему")
     
     # Просмотр
@@ -494,7 +506,8 @@ def register_schema_edit_handlers(dp, bot):
     # Редактирование
     dp.message.register(edit_match_start, F.text == "✏️ Изменить сопоставление")
     dp.message.register(schema_selected_for_edit, SchemaStates.selecting_schema_to_edit)
-    dp.message.register(lambda m, s: handle_edit_validation_file(m, s, bot), SchemaStates.waiting_edit_files, F.document)
+    dp.message.register(partial(handle_edit_validation_file, bot=bot), SchemaStates.waiting_edit_files, F.document)
     dp.message.register(match_number_entered, SchemaStates.entering_match_number)
     dp.message.register(column_selected_for_edit, SchemaStates.selecting_column_to_edit)
     dp.message.register(new_column_value_entered, SchemaStates.selecting_new_column_value)
+
