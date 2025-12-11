@@ -103,8 +103,8 @@ def get_edit_match_menu_keyboard():
     """Меню после загрузки файлов для редактирования"""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="✏️ Изменить сопоставление")],
-            [KeyboardButton(text="➕ Добавить сопоставление")],  # НОВАЯ КНОПКА
+            [KeyboardButton(text="✏️ Редактировать сопоставление")],  # ✅ УНИКАЛЬНЫЙ ТЕКСТ
+            [KeyboardButton(text="➕ Добавить сопоставление")],
             [KeyboardButton(text="❌ Отмена")]
         ],
         resize_keyboard=True

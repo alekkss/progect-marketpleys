@@ -284,7 +284,7 @@ async def edit_action_selected(message: types.Message, state: FSMContext):
     
     data = await state.get_data()
     
-    if message.text == "✏️ Изменить сопоставление":
+    if message.text == "✏️ Редактировать сопоставление":  
         # Переход к изменению существующего
         matches = data.get('edit_matches', [])
         
