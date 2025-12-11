@@ -37,8 +37,12 @@ class SchemaStates(StatesGroup):
     selecting_schema_to_update = State()
     waiting_update_files = State()
     selecting_schema_to_delete = State()
-    selecting_schema_to_view = State()  # Для выбора схемы для просмотра
-    viewing_schema_matches = State()     # Для навигации по сопоставлениям
+    selecting_schema_to_view = State()       # Для просмотра сопоставлений
+    viewing_schema_matches = State()          # Для навигации по сопоставлениям
+    selecting_schema_to_edit = State()        # Для выбора схемы для редактирования
+    entering_match_number = State()           # Ввод номера сопоставления
+    selecting_column_to_edit = State()        # Выбор какой столбец менять
+    selecting_new_column_value = State()      # Выбор нового значения
 
 user_files = {}
 user_schemas = {}  # Временное хранилище для создания схем
@@ -332,6 +336,7 @@ def create_bot():
         keyboard = ReplyKeyboardMarkup(
             keyboard=[
                 [KeyboardButton(text="👁 Просмотреть текущие сопоставления")],
+                [KeyboardButton(text="✏️ Изменить сопоставление")],  # НОВАЯ КНОПКА
                 [KeyboardButton(text="◀️ Назад")]
             ],
             resize_keyboard=True
@@ -455,6 +460,287 @@ def create_bot():
             "✅ Просмотр завершен",
             reply_markup=keyboard
         )
+    
+    @dp.message(F.text == "✏️ Изменить сопоставление")
+    async def edit_match_start(message: types.Message, state: FSMContext):
+        """Выбор схемы для редактирования сопоставления"""
+        user_id = message.from_user.id
+        schemas = db.get_user_schemas(user_id)
+        
+        if not schemas:
+            await message.answer("❌ У тебя нет схем!")
+            return
+        
+        keyboard_buttons = []
+        for schema in schemas:
+            if schema.get('name'):
+                keyboard_buttons.append([KeyboardButton(text=schema['name'])])
+        
+        if not keyboard_buttons:
+            await message.answer("❌ У тебя нет валидных схем!")
+            return
+        
+        keyboard_buttons.append([KeyboardButton(text="❌ Отмена")])
+        
+        keyboard = ReplyKeyboardMarkup(keyboard=keyboard_buttons, resize_keyboard=True)
+        
+        await state.set_state(SchemaStates.selecting_schema_to_edit)
+        await message.answer("Выбери схему для редактирования:", reply_markup=keyboard)
+    
+    @dp.message(SchemaStates.selecting_schema_to_edit)
+    async def schema_selected_for_edit(message: types.Message, state: FSMContext):
+        """Схема выбрана, запрашиваем номер сопоставления"""
+        if message.text == "❌ Отмена":
+            await edit_schema_start(message, state)
+            return
+        
+        user_id = message.from_user.id
+        schema = db.get_schema(user_id, message.text)
+        
+        if not schema:
+            await message.answer("❌ Схема не найдена")
+            return
+        
+        schema_id = schema['id']
+        schema_name = schema['name']
+        
+        # Получаем сопоставления
+        matches_data = db.get_schema_matches(schema_id)
+        matches = matches_data.get('matches_all_three', [])
+        
+        if not matches:
+            await state.clear()
+            await message.answer(
+                f"📋 Схема '{schema_name}'\n\n"
+                "⚠️ Нет сопоставлений для редактирования"
+            )
+            await edit_schema_start(message, state)
+            return
+        
+        # Сохраняем в state
+        await state.update_data(
+            edit_schema_id=schema_id,
+            edit_schema_name=schema_name,
+            edit_matches=matches
+        )
+        
+        # Показываем краткий список
+        text = f"📋 Схема: {schema_name}\n"
+        text += f"📊 Всего сопоставлений: {len(matches)}\n\n"
+        
+        for i, match in enumerate(matches, 1):
+            wb_col = match.get('column_1', '—')
+            ozon_col = match.get('column_2', '—')
+            yandex_col = match.get('column_3', '—')
+            
+            text += f"#{i}: {wb_col} | {ozon_col} | {yandex_col}\n"
+            
+            # Если список длинный, разбиваем
+            if i % 20 == 0:
+                await message.answer(text)
+                text = ""
+        
+        if text:
+            await message.answer(text)
+        
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="❌ Отмена")]],
+            resize_keyboard=True
+        )
+        
+        await state.set_state(SchemaStates.entering_match_number)
+        await message.answer(
+            f"Введи номер сопоставления для редактирования (1-{len(matches)}):",
+            reply_markup=keyboard
+        )
+    
+    @dp.message(SchemaStates.entering_match_number)
+    async def match_number_entered(message: types.Message, state: FSMContext):
+        """Номер введен, показываем детали и варианты редактирования"""
+        if message.text == "❌ Отмена":
+            await edit_schema_start(message, state)
+            return
+        
+        # Проверяем что это число
+        try:
+            match_number = int(message.text.strip())
+        except ValueError:
+            await message.answer("❌ Введи число!")
+            return
+        
+        data = await state.get_data()
+        matches = data.get('edit_matches', [])
+        
+        if match_number < 1 or match_number > len(matches):
+            await message.answer(f"❌ Номер должен быть от 1 до {len(matches)}")
+            return
+        
+        # Получаем выбранное сопоставление (индекс = номер - 1)
+        selected_match = matches[match_number - 1]
+        
+        # Сохраняем номер
+        await state.update_data(
+            edit_match_index=match_number - 1,
+            edit_match_data=selected_match
+        )
+        
+        # Показываем текущее сопоставление
+        wb_col = selected_match.get('column_1', '—')
+        ozon_col = selected_match.get('column_2', '—')
+        yandex_col = selected_match.get('column_3', '—')
+        confidence = selected_match.get('confidence', 0)
+        description = selected_match.get('description', '')
+        
+        text = f"📋 Сопоставление #{match_number}\n\n"
+        text += f"🔹 WB: {wb_col}\n"
+        text += f"🔸 Ozon: {ozon_col}\n"
+        text += f"🔹 Яндекс: {yandex_col}\n"
+        text += f"📈 Уверенность: {confidence:.0%}\n"
+        if description:
+            text += f"💬 {description}\n"
+        
+        await message.answer(text)
+        
+        # Предлагаем что изменить
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📝 Изменить WB столбец")],
+                [KeyboardButton(text="📝 Изменить Ozon столбец")],
+                [KeyboardButton(text="📝 Изменить Яндекс столбец")],
+                [KeyboardButton(text="🗑 Удалить сопоставление")],
+                [KeyboardButton(text="❌ Отмена")]
+            ],
+            resize_keyboard=True
+        )
+        
+        await state.set_state(SchemaStates.selecting_column_to_edit)
+        await message.answer("Что хочешь изменить?", reply_markup=keyboard)
+    
+    @dp.message(SchemaStates.selecting_column_to_edit)
+    async def column_selected_for_edit(message: types.Message, state: FSMContext):
+        """Выбран столбец для редактирования, показываем доступные варианты"""
+        if message.text == "❌ Отмена":
+            await edit_schema_start(message, state)
+            return
+        
+        # Обработка удаления
+        if message.text == "🗑 Удалить сопоставление":
+            await delete_match_confirm(message, state)
+            return
+        
+        # Определяем какой столбец редактируем
+        if message.text == "📝 Изменить WB столбец":
+            marketplace = 'wildberries'
+            column_key = 'column_1'
+            display_name = 'WB'
+        elif message.text == "📝 Изменить Ozon столбец":
+            marketplace = 'ozon'
+            column_key = 'column_2'
+            display_name = 'Ozon'
+        elif message.text == "📝 Изменить Яндекс столбец":
+            marketplace = 'yandex'
+            column_key = 'column_3'
+            display_name = 'Яндекс'
+        else:
+            await message.answer("❌ Неизвестная команда")
+            return
+        
+        await state.update_data(
+            edit_marketplace=marketplace,
+            edit_column_key=column_key,
+            edit_display_name=display_name
+        )
+        
+        # Загружаем доступные столбцы из последних файлов схемы
+        # Или можно показать поле для ручного ввода
+        await message.answer(
+            f"Введи новое название столбца для {display_name}:\n\n"
+            f"(Можешь ввести вручную или скопировать из Excel)",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="❌ Отмена")]],
+                resize_keyboard=True
+            )
+        )
+        
+        await state.set_state(SchemaStates.selecting_new_column_value)
+    
+    @dp.message(SchemaStates.selecting_new_column_value)
+    async def new_column_value_entered(message: types.Message, state: FSMContext):
+        """Новое значение введено, сохраняем изменения"""
+        if message.text == "❌ Отмена":
+            await edit_schema_start(message, state)
+            return
+        
+        new_value = message.text.strip()
+        
+        if not new_value:
+            await message.answer("❌ Название столбца не может быть пустым!")
+            return
+        
+        data = await state.get_data()
+        schema_id = data.get('edit_schema_id')
+        schema_name = data.get('edit_schema_name')
+        matches = data.get('edit_matches', [])
+        match_index = data.get('edit_match_index')
+        column_key = data.get('edit_column_key')
+        display_name = data.get('edit_display_name')
+        
+        # Обновляем значение
+        old_value = matches[match_index].get(column_key, '—')
+        matches[match_index][column_key] = new_value
+        
+        # Сохраняем в БД
+        matches_data = {'matches_all_three': matches}
+        db.save_schema_matches(schema_id, matches_data)
+        
+        await state.clear()
+        
+        text = f"✅ Сопоставление обновлено!\n\n"
+        text += f"📋 Схема: {schema_name}\n"
+        text += f"📝 Столбец {display_name}:\n"
+        text += f"   Было: {old_value}\n"
+        text += f"   Стало: {new_value}"
+        
+        await message.answer(text)
+        
+        # Возвращаемся к меню редактирования
+        await edit_schema_start(message, state)
+
+
+    async def delete_match_confirm(message: types.Message, state: FSMContext):
+        """Удаление сопоставления"""
+        data = await state.get_data()
+        schema_id = data.get('edit_schema_id')
+        schema_name = data.get('edit_schema_name')
+        matches = data.get('edit_matches', [])
+        match_index = data.get('edit_match_index')
+        match_data = data.get('edit_match_data')
+        
+        # Удаляем сопоставление
+        deleted_match = matches.pop(match_index)
+        
+        # Сохраняем в БД
+        matches_data = {'matches_all_three': matches}
+        db.save_schema_matches(schema_id, matches_data)
+        
+        await state.clear()
+        
+        text = f"✅ Сопоставление удалено!\n\n"
+        text += f"📋 Схема: {schema_name}\n"
+        text += f"🗑 Удалено:\n"
+        text += f"   WB: {deleted_match.get('column_1', '—')}\n"
+        text += f"   Ozon: {deleted_match.get('column_2', '—')}\n"
+        text += f"   Яндекс: {deleted_match.get('column_3', '—')}"
+        
+        await message.answer(text)
+        
+        # Возвращаемся к меню редактирования
+        await edit_schema_start(message, state)
+
+
+
+
+
 
     
 
