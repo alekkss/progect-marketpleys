@@ -3,126 +3,149 @@
 """
 
 import os
+from typing import Dict, List, Any
 from dotenv import load_dotenv
 
+# Загрузка переменных окружения
 load_dotenv()
 
-# OpenRouter API настройки
-OPENROUTER_API_KEY = "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"
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-AI_MODEL = "google/gemini-2.5-flash-preview-09-2025"
-AI_TEMPERATURE = 0.1
-TELEGRAM_BOT_TOKEN = "7534003941:AAEib2A0V-aY1ohtj7yam5Wm6_7U1hU5HAA"
 
-# Конфигурация файлов для каждого маркетплейса
-FILE_CONFIGS = {
-    "wildberries": {
-        "sheet_name": "Товары",
-        "header_row": 3,
-        "display_name": "WB Товары"
-    },
-    "ozon": {
-        "sheet_name": "Шаблон",
-        "header_row": 2,
-        "display_name": "Ozon Шаблон"
-    },
-    "yandex": {
-        "sheet_name": "Данные о товарах",
-        "header_row": 4,
-        "display_name": "Яндекс Данные"
+class Config:
+    """Класс конфигурации приложения, следующий принципу Single Responsibility"""
+    
+    # OpenRouter API настройки
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    AI_MODEL: str = os.getenv("AI_MODEL", "google/gemini-2.5-flash-preview-09-2025")
+    AI_TEMPERATURE: float = float(os.getenv("AI_TEMPERATURE", "0.1"))
+    
+    # Telegram Bot
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    
+    # Конфигурация файлов для каждого маркетплейса
+    FILE_CONFIGS: Dict[str, Dict[str, Any]] = {
+        "wildberries": {
+            "sheet_name": "Товары",
+            "header_row": 3,
+            "display_name": "WB Товары"
+        },
+        "ozon": {
+            "sheet_name": "Шаблон",
+            "header_row": 2,
+            "display_name": "Ozon Шаблон"
+        },
+        "yandex": {
+            "sheet_name": "Данные о товарах",
+            "header_row": 4,
+            "display_name": "Яндекс Данные"
+        }
     }
-}
-
-# Обязательные совпадения (всегда должны быть сопоставлены)
-MANDATORY_MATCHES = [
-    {
-        "column_1": "Артикул продавца",
-        "column_2": "Артикул*",
-        "column_3": "Ваш SKU *",
-        "description": "Уникальный артикул товара"
-    },
-    {
-        "column_1": "Баркоды",
-        "column_2": "Штрихкод (Серийный номер / EAN)",
-        "column_3": "Штрихкод *",
-        "description": "Штрихкод товара"
-    },
-    {
-        "column_1": "Бренд",
-        "column_2": "Бренд*",
-        "column_3": "Бренд *",
-        "description": "Бренд производителя"
-    },
-    {
-        "column_1": "Наименование",
-        "column_2": "Название товара",
-        "column_3": "Название товара *",
-        "description": "Название товара"
-    },
-    {
-        "column_1": "Описание",
-        "column_2": "Аннотация",
-        "column_3": "Описание товара *",
-        "description": "Описание товара"
-    },
-    {
-        "column_1": "Вес с упаковкой (кг)",
-        "column_2": "Вес в упаковке, г*",
-        "column_3": "Вес с упаковкой, кг",
-        "description": "Вес товара с упаковкой"
-    },
-    # ИСКЛЮЧЕНО: Цена больше не обязательное совпадение
-    # {
-    #     "column_1": "Цена",
-    #     "column_2": "Цена, руб.*",
-    #     "column_3": "Цена *",
-    #     "description": "Цена товара"
-    # },
-    {
-        "column_1": "Фото",
-        "column_2": "Ссылки на дополнительные фото",
-        "column_3": "Ссылка на изображение *",
-        "description": "Фотографии товара"
-    }
-]
-
-# НОВОЕ: Список столбцов-исключений (не сравнивать и не синхронизировать)
-EXCLUDED_COLUMNS = [
-    # Цены (каждый маркетплейс устанавливает свои цены)
-    "Цена",
-    "Цена, руб.*",
-    "Цена *",
-    "Розничная цена",
-    "Цена до скидки",
-    "Старая цена",
-    "Rich-контент JSON",
-    "НДС, %*",
-    "Ставка НДС",
     
-    # Можно добавить другие столбцы, например:
-    # "Остаток",
-    # "Количество",
-    # "Скидка",
-]
+    # Обязательные совпадения (всегда должны быть сопоставлены)
+    MANDATORY_MATCHES: List[Dict[str, str]] = [
+        {
+            "column_1": "Артикул продавца",
+            "column_2": "Артикул*",
+            "column_3": "Ваш SKU *",
+            "description": "Уникальный артикул товара"
+        },
+        {
+            "column_1": "Баркоды",
+            "column_2": "Штрихкод (Серийный номер / EAN)",
+            "column_3": "Штрихкод *",
+            "description": "Штрихкод товара"
+        },
+        {
+            "column_1": "Бренд",
+            "column_2": "Бренд*",
+            "column_3": "Бренд *",
+            "description": "Бренд производителя"
+        },
+        {
+            "column_1": "Наименование",
+            "column_2": "Название товара",
+            "column_3": "Название товара *",
+            "description": "Название товара"
+        },
+        {
+            "column_1": "Описание",
+            "column_2": "Аннотация",
+            "column_3": "Описание товара *",
+            "description": "Описание товара"
+        },
+        {
+            "column_1": "Вес с упаковкой (кг)",
+            "column_2": "Вес в упаковке, г*",
+            "column_3": "Вес с упаковкой, кг",
+            "description": "Вес товара с упаковкой"
+        },
+        {
+            "column_1": "Фото",
+            "column_2": "Ссылки на дополнительные фото",
+            "column_3": "Ссылка на изображение *",
+            "description": "Фотографии товара"
+        }
+    ]
+    
+    # Список столбцов-исключений (не сравнивать и не синхронизировать)
+    EXCLUDED_COLUMNS: List[str] = [
+        # Цены (каждый маркетплейс устанавливает свои цены)
+        "Цена",
+        "Цена, руб.*",
+        "Цена *",
+        "Розничная цена",
+        "Цена до скидки",
+        "Старая цена",
+        "Rich-контент JSON",
+        "НДС, %*",
+        "Ставка НДС",
+    ]
+    
+    @classmethod
+    def validate(cls) -> bool:
+        """
+        Валидация обязательных параметров конфигурации
+        
+        Returns:
+            bool: True если все обязательные параметры заполнены
+        """
+        required_fields = [cls.OPENROUTER_API_KEY, cls.TELEGRAM_BOT_TOKEN]
+        return all(field for field in required_fields)
 
-# Функция для проверки, является ли столбец исключенным
-def is_excluded_column(column_name: str) -> bool:
-    """
-    Проверяет, находится ли столбец в списке исключений
+
+class ColumnValidator:
+    """Класс для валидации столбцов (Single Responsibility Principle)"""
     
-    Args:
-        column_name: название столбца
-    
-    Returns:
-        True если столбец исключен, False в противном случае
-    """
-    if not column_name:
+    @staticmethod
+    def is_excluded_column(column_name: str) -> bool:
+        """
+        Проверяет, находится ли столбец в списке исключений
+        
+        Args:
+            column_name: название столбца
+            
+        Returns:
+            True если столбец исключен, False в противном случае
+        """
+        if not column_name:
+            return False
+        
+        column_lower = column_name.strip().lower()
+        
+        for excluded in Config.EXCLUDED_COLUMNS:
+            if excluded.strip().lower() == column_lower:
+                return True
+        
         return False
-    
-    column_lower = column_name.strip().lower()
-    
-    for excluded in EXCLUDED_COLUMNS:
-        if excluded.strip().lower() == column_lower:
-            return True
-    
-    return False
+
+
+# Экспортируем для обратной совместимости
+OPENROUTER_API_KEY = Config.OPENROUTER_API_KEY
+OPENROUTER_BASE_URL = Config.OPENROUTER_BASE_URL
+AI_MODEL = Config.AI_MODEL
+AI_TEMPERATURE = Config.AI_TEMPERATURE
+TELEGRAM_BOT_TOKEN = Config.TELEGRAM_BOT_TOKEN
+FILE_CONFIGS = Config.FILE_CONFIGS
+MANDATORY_MATCHES = Config.MANDATORY_MATCHES
+EXCLUDED_COLUMNS = Config.EXCLUDED_COLUMNS
+is_excluded_column = ColumnValidator.is_excluded_column
