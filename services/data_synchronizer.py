@@ -536,7 +536,10 @@ class DataSynchronizer:
                 
                 if pd.isna(val_wb) or not str(val_wb).strip():
                     idx = wb_data[article]['index']
-                    col_dtype = dfs['wildberries'][col_wb].dtype
+                    series = dfs['wildberries'][col_wb]
+                    if isinstance(series, pd.DataFrame):
+                        series = series.iloc[:, 0]  # Берем первый столбец если это DataFrame
+                    col_dtype = series.dtype
                     converted_value = self._convert_value(source_value, source_unit, unit_wb)
                     
                     # Проверка validation через AI
@@ -570,7 +573,10 @@ class DataSynchronizer:
                 
                 if pd.isna(val_ozon) or not str(val_ozon).strip():
                     idx = ozon_data[article]['index']
-                    col_dtype = dfs['ozon'][col_ozon].dtype
+                    series = dfs['ozon'][col_ozon]
+                    if isinstance(series, pd.DataFrame):
+                        series = series.iloc[:, 0]
+                    col_dtype = series.dtype
                     converted_value = self._convert_value(source_value, source_unit, unit_ozon)
                     
                     final_value = self._validate_with_ai(converted_value, 'ozon', col_ozon)
@@ -601,7 +607,10 @@ class DataSynchronizer:
                 
                 if pd.isna(val_yandex) or not str(val_yandex).strip():
                     idx = yandex_data[article]['index']
-                    col_dtype = dfs['yandex'][col_yandex].dtype
+                    series = dfs['yandex'][col_yandex]
+                    if isinstance(series, pd.DataFrame):
+                        series = series.iloc[:, 0]
+                    col_dtype = series.dtype
                     converted_value = self._convert_value(source_value, source_unit, unit_yandex)
                     
                     final_value = self._validate_with_ai(converted_value, 'yandex', col_yandex)
@@ -766,7 +775,10 @@ class DataSynchronizer:
                 # Если в первом пусто, а во втором есть
                 if (pd.isna(val1) or not str(val1).strip()) and pd.notna(val2) and str(val2).strip():
                     idx = data1[article]['index']
-                    col_dtype = dfs[mp1][col1].dtype
+                    series = dfs[mp1][col1]
+                    if isinstance(series, pd.DataFrame):
+                        series = series.iloc[:, 0]
+                    col_dtype = series.dtype  # ✅
                     converted_value = self._convert_value(val2, unit2, unit1)
                     
                     final_value = self._validate_with_ai(converted_value, mp1, col1)
@@ -792,7 +804,10 @@ class DataSynchronizer:
                 # Если во втором пусто, а в первом есть
                 elif (pd.isna(val2) or not str(val2).strip()) and pd.notna(val1) and str(val1).strip():
                     idx = data2[article]['index']
-                    col_dtype = dfs[mp2][col2].dtype
+                    series = dfs[mp2][col2]
+                    if isinstance(series, pd.DataFrame):
+                        series = series.iloc[:, 0]
+                    col_dtype = series.dtype  # ✅
                     converted_value = self._convert_value(val1, unit1, unit2)
                     
                     final_value = self._validate_with_ai(converted_value, mp2, col2)
