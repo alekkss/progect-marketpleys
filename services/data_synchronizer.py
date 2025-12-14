@@ -59,6 +59,27 @@ class DataSynchronizer:
         logger.info("ВЫРАВНИВАНИЕ АРТИКУЛОВ МЕЖДУ МАРКЕТПЛЕЙСАМИ")
         logger.info("="*60)
         
+        # 🆕 ИСПРАВЛЕНИЕ: Сначала исправляем дубликаты столбцов во всех DataFrame
+        for marketplace in ['wildberries', 'ozon', 'yandex']:
+            if dfs[marketplace].columns.duplicated().any():
+                logger.warning(f"⚠️  {marketplace.upper()}: найдены дубликаты столбцов, исправляю...")
+                
+                # Переименовываем дубликаты
+                cols = pd.Series(dfs[marketplace].columns)
+                for dup in cols[cols.duplicated()].unique():
+                    # Находим все позиции этого столбца
+                    dup_positions = cols[cols == dup].index.tolist()
+                    logger.debug(f"   Дубликат '{dup}': позиции {dup_positions}")
+                    
+                    # Переименовываем: первый оставляем, остальным добавляем _1, _2, _3...
+                    for i, pos in enumerate(dup_positions):
+                        if i > 0:  # Пропускаем первое вхождение
+                            new_name = f"{dup}_duplicate_{i}" if dup else f"_empty_col_{pos}"
+                            cols.iloc[pos] = new_name
+                
+                dfs[marketplace].columns = cols
+                logger.info(f"   ✓ Дубликаты переименованы")
+        
         # Собираем все уникальные артикулы из всех маркетплейсов
         all_articles = set()
         
