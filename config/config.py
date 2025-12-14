@@ -42,7 +42,7 @@ class Config:
         "yandex": {
             "sheet_name": "Данные о товарах",
             "header_row": 4,
-            "data_start_row": 7,
+            "data_start_row": 8,
             "display_name": "Яндекс Данные"
         }
     }

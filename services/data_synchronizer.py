@@ -88,6 +88,9 @@ class DataSynchronizer:
                 logger.warning(f"⚠️ {marketplace.upper()}: столбец '{article_col}' не найден, пропускаю")
                 continue
             
+            # 🆕 ВАЖНО: Сбрасываем индексы ПЕРЕД обработкой!
+            dfs[marketplace] = dfs[marketplace].reset_index(drop=True)
+            
             # Существующие артикулы
             existing_articles = dfs[marketplace][article_col].dropna().astype(str).str.strip()
             existing_articles = existing_articles[existing_articles != '']
@@ -102,7 +105,7 @@ class DataSynchronizer:
             ]
             existing_articles = existing_articles[existing_articles.str.len() < 50]
             
-            # 🆕 ВАЖНО: Находим индекс последней заполненной строки
+            # 🆕 Находим индекс последней заполненной строки (теперь индексы уникальны!)
             last_filled_idx = existing_articles.index[-1] if len(existing_articles) > 0 else -1
             
             existing_articles_set = set(existing_articles.tolist())
@@ -125,7 +128,7 @@ class DataSynchronizer:
                 new_row[article_col] = article
                 new_rows.append(new_row)
             
-            # 🆕 ИСПРАВЛЕНИЕ: Вставляем новые строки СРАЗУ ПОСЛЕ последней заполненной!
+            # Вставляем новые строки СРАЗУ ПОСЛЕ последней заполненной!
             if new_rows:
                 new_df = pd.DataFrame(new_rows)
                 
@@ -138,7 +141,7 @@ class DataSynchronizer:
                     before = dfs[marketplace].iloc[:last_filled_idx + 1].copy()
                     after = dfs[marketplace].iloc[last_filled_idx + 1:].copy()
                     
-                    # Склеиваем: заполненные + новые + пустые
+                    # Склеиваем: заполненные + новые + пустые (индексы уже уникальны!)
                     dfs[marketplace] = pd.concat([before, new_df, after], ignore_index=True)
                     
                     logger.info(f" ✓ Добавлено {len(new_rows)} строк после строки {last_filled_idx + 1}")
