@@ -336,52 +336,6 @@ class DataSynchronizer:
             wb.close()
             logger.info(f"✅ {config['display_name']}: загружено {len(df)} товаров")
         
-        # 🆕 СИНХРОНИЗИРУЕМ ДУБЛИКАТЫ СТОЛБЦОВ
-        dfs = self._sync_duplicate_columns(dfs)
-        
-        return dfs
-    
-    def _sync_duplicate_columns(self, dfs: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
-        """
-        Синхронизирует данные между дубликатами столбцов
-        Если в оригинальном столбце есть значение, копирует его в дубликат
-        """
-        for marketplace, df in dfs.items():
-            if marketplace not in self.original_column_names:
-                continue
-            
-            renamed_map = self.original_column_names[marketplace]['renamed']
-            
-            for duplicated_name, original_name in renamed_map.items():
-                # duplicated_name = "Вес с упаковкой (кг)1"
-                # original_name = "Вес с упаковкой (кг)"
-                
-                if original_name in df.columns and duplicated_name in df.columns:
-                    # Копируем значения из оригинального столбца в дубликат
-                    # Только там где в дубликате пусто
-                    mask_empty_duplicate = df[duplicated_name].isna() | (df[duplicated_name].astype(str).str.strip() == '')
-                    mask_has_original = df[original_name].notna() & (df[original_name].astype(str).str.strip() != '')
-                    
-                    # Копируем значения
-                    copy_mask = mask_empty_duplicate & mask_has_original
-                    df.loc[copy_mask, duplicated_name] = df.loc[copy_mask, original_name]
-                    
-                    copied_count = copy_mask.sum()
-                    if copied_count > 0:
-                        logger.info(f"✅ [{marketplace}] Скопировано {copied_count} значений: '{original_name}' → '{duplicated_name}'")
-                    
-                    # Также копируем в обратную сторону (если в дубликате есть, а в оригинале нет)
-                    mask_empty_original = df[original_name].isna() | (df[original_name].astype(str).str.strip() == '')
-                    mask_has_duplicate = df[duplicated_name].notna() & (df[duplicated_name].astype(str).str.strip() != '')
-                    
-                    copy_mask_reverse = mask_empty_original & mask_has_duplicate
-                    df.loc[copy_mask_reverse, original_name] = df.loc[copy_mask_reverse, duplicated_name]
-                    
-                    copied_count_reverse = copy_mask_reverse.sum()
-                    if copied_count_reverse > 0:
-                        logger.info(f"✅ [{marketplace}] Скопировано {copied_count_reverse} значений: '{duplicated_name}' → '{original_name}'")
-            
-            dfs[marketplace] = df
         
         return dfs
 
@@ -1273,20 +1227,10 @@ class DataSynchronizer:
 
     
     def _save_results(self, dfs: Dict[str, pd.DataFrame], output_paths: Dict[str, str]):
-        """Сохраняет синхронизированные данные в файлы С СОХРАНЕНИЕМ ФОРМАТОВ и AI-проверкой"""
+        """Сохраняет синхронизированные данные в файлы"""
         print("\n[*] Сохраняю синхронизированные данные...")
         
-        print(f"[DEBUG] AI comparator доступен: {self.ai_comparator is not None}")
-        
-        # 🆕 СИНХРОНИЗИРУЕМ ДУБЛИКАТЫ ПЕРЕД СОХРАНЕНИЕМ
-        dfs = self._sync_duplicate_columns(dfs)
-        
-        stats = {
-            'saved': 0,
-            'ai_matched': 0,
-            'validation_conflicts': 0,
-            'skipped': 0
-        }
+        stats = {'saved': 0, 'ai_matched': 0, 'validation_conflicts': 0, 'skipped': 0}
         
         for marketplace, df in dfs.items():
             output_path = output_paths.get(marketplace)
@@ -1298,42 +1242,68 @@ class DataSynchronizer:
             
             print(f"\n[*] Обработка {config['display_name']}...")
             
-            # Сбрасываем индексы ПЕРЕД сохранением!
+            # Сбрасываем индексы ПЕРЕД сохранением
             df = df.reset_index(drop=True)
-            
-            # 🆕 ВОССТАНАВЛИВАЕМ ОРИГИНАЛЬНЫЕ НАЗВАНИЯ СТОЛБЦОВ
-            if marketplace in self.original_column_names:
-                renamed_map = self.original_column_names[marketplace]['renamed']
-                # Переименовываем обратно: "Вес с упаковкой (кг)1" → "Вес с упаковкой (кг)"
-                df = df.rename(columns=renamed_map)
-                logger.info(f"✅ [{marketplace}] Восстановлены оригинальные названия {len(renamed_map)} столбцов")
             
             # Открываем ОРИГИНАЛЬНЫЙ файл через openpyxl
             wb = load_workbook(original_file)
             ws = wb[config['sheet_name']]
             
-            validation_count = len(ws.data_validations.dataValidation)
-            print(f"[DEBUG] Найдено data validations на листе: {validation_count}")
-            
-            # Получаем номер строки заголовка
             header_row = config['header_row']
             data_start_row = config.get('data_start_row', header_row + 1)
+            
+            # 🆕 СОЗДАЁМ МАППИНГ: DataFrame столбец → Excel столбцы (с учётом дубликатов!)
+            df_to_excel_mapping = {}  # {df_col_name: [excel_col_1, excel_col_2, ...]}
+            header_count = {}
+            
+            # Читаем заголовки из Excel
+            for col_idx, cell in enumerate(ws[header_row], start=1):
+                if cell.value:
+                    col_name = str(cell.value).strip()
+                    
+                    # Первое вхождение - оригинальное имя
+                    if col_name not in header_count:
+                        header_count[col_name] = 0
+                        df_col = col_name  # "Вес с упаковкой (кг)"
+                    else:
+                        # Дубликат - с суффиксом
+                        header_count[col_name] += 1
+                        df_col = f"{col_name}{header_count[col_name]}"  # "Вес с упаковкой (кг)1"
+                    
+                    # Сохраняем маппинг
+                    if df_col not in df_to_excel_mapping:
+                        df_to_excel_mapping[df_col] = []
+                    df_to_excel_mapping[df_col].append(col_idx)
+            
+            # 🆕 СИНХРОНИЗАЦИЯ ДУБЛИКАТОВ ПЕРЕД ЗАПИСЬЮ
+            if marketplace in self.original_column_names:
+                renamed_map = self.original_column_names[marketplace]['renamed']
+                
+                for duplicated_name, original_name in renamed_map.items():
+                    # duplicated_name = "Вес с упаковкой (кг)1"
+                    # original_name = "Вес с упаковкой (кг)"
+                    
+                    if original_name in df.columns and duplicated_name in df.columns:
+                        # Копируем значения из оригинала в дубликат
+                        for idx in df.index:
+                            original_value = df.at[idx, original_name]
+                            if pd.notna(original_value) and str(original_value).strip():
+                                df.at[idx, duplicated_name] = original_value
+                        
+                        logger.info(f"✅ [{marketplace}] Синхронизированы: '{original_name}' → '{duplicated_name}'")
             
             # Расширяем лист если нужно
             current_rows = ws.max_row
             required_rows = data_start_row + len(df)
             
             if required_rows > current_rows:
-                print(f"[INFO] Расширяю лист: текущих строк = {current_rows}, требуется = {required_rows}")
-                # Копируем форматы из последней строки данных
+                print(f"[INFO] Расширяю лист: {current_rows} → {required_rows}")
                 last_data_row = current_rows
                 for row_idx in range(current_rows + 1, required_rows + 1):
                     for col_idx in range(1, ws.max_column + 1):
-                        # Копируем стиль из строки выше
                         source_cell = ws.cell(row=last_data_row, column=col_idx)
                         target_cell = ws.cell(row=row_idx, column=col_idx)
                         
-                        # Копируем стиль
                         if source_cell.has_style:
                             target_cell.font = source_cell.font.copy()
                             target_cell.border = source_cell.border.copy()
@@ -1342,69 +1312,48 @@ class DataSynchronizer:
                             target_cell.protection = source_cell.protection.copy()
                             target_cell.alignment = source_cell.alignment.copy()
             
-            # 🆕 СОЗДАЁМ МАППИНГ С УЧЁТОМ ДУБЛИКАТОВ
-            # В Excel может быть два столбца "Вес с упаковкой (кг)"
-            # Нужно правильно определить какой столбец какой
-            column_mapping = {}
-            header_count = {}
-            
-            for col_idx, cell in enumerate(ws[header_row], start=1):
-                if cell.value:
-                    col_name = str(cell.value).strip()
-                    
-                    # Если это дубликат столбца
-                    if col_name in header_count:
-                        header_count[col_name] += 1
-                        # Создаём временное имя для маппинга
-                        temp_name = f"{col_name}{header_count[col_name]}"
-                        column_mapping[temp_name] = col_idx
-                    else:
-                        header_count[col_name] = 0
-                        column_mapping[col_name] = col_idx
-            
-            # Используем enumerate для правильного подсчёта строк!
+            # Записываем данные
             for row_num, (df_row_idx, row) in enumerate(df.iterrows()):
-                # Вычисляем правильную строку в Excel
                 excel_row_idx = data_start_row + row_num
                 
-                for col_name, value in row.items():
-                    if col_name not in column_mapping or pd.isna(value):
+                for df_col_name, value in row.items():
+                    if pd.isna(value):
                         continue
                     
-                    excel_col_idx = column_mapping[col_name]
-                    cell = ws.cell(row=excel_row_idx, column=excel_col_idx)
+                    # Получаем список Excel столбцов для этого DataFrame столбца
+                    excel_cols = df_to_excel_mapping.get(df_col_name, [])
                     
-                    # Получаем список допустимых значений из validation
-                    allowed_values = self._get_validation_list_values(ws, excel_row_idx, excel_col_idx)
-                    
-                    if allowed_values and self.ai_comparator:
-                        # Есть validation - используем AI для сопоставления
-                        matched_value = self.ai_comparator.match_value_with_list(str(value), allowed_values)
+                    # Записываем во ВСЕ соответствующие столбцы (для дубликатов)
+                    for excel_col_idx in excel_cols:
+                        cell = ws.cell(row=excel_row_idx, column=excel_col_idx)
                         
-                        if matched_value:
-                            cell.value = matched_value
-                            stats['saved'] += 1
-                            stats['ai_matched'] += 1
+                        # Валидация через AI (если есть)
+                        allowed_values = self._get_validation_list_values(ws, excel_row_idx, excel_col_idx)
+                        
+                        if allowed_values and self.ai_comparator:
+                            matched_value = self.ai_comparator.match_value_with_list(str(value), allowed_values)
+                            if matched_value:
+                                cell.value = matched_value
+                                stats['ai_matched'] += 1
+                            else:
+                                stats['validation_conflicts'] += 1
+                                stats['skipped'] += 1
+                                continue
                         else:
-                            stats['validation_conflicts'] += 1
-                            print(f"  [!] Конфликт: '{value}' не найдено в списке {allowed_values[:3]}... (строка {excel_row_idx}, {col_name})")
-                            stats['skipped'] += 1
-                    else:
-                        # Нет validation - записываем как есть
-                        cell.value = value
+                            cell.value = value
+                        
                         stats['saved'] += 1
             
             # Сохраняем файл
             wb.save(output_path)
             print(f"[+] {config['display_name']}: сохранено в '{output_path}'")
         
-        # Итоговая статистика
+        # Статистика
         print(f"\n{'='*60}")
-        print(f"СТАТИСТИКА СОХРАНЕНИЯ:")
-        print(f"  ✓ Записано значений: {stats['saved']}")
+        print(f"СТАТИСТИКА:")
+        print(f"  ✓ Записано: {stats['saved']}")
         if self.ai_comparator:
             print(f"  🤖 AI-сопоставлений: {stats['ai_matched']}")
-            print(f"  ⚠ Конфликтов с validation: {stats['validation_conflicts']}")
-            print(f"  ⊘ Пропущено: {stats['skipped']}")
+            print(f"  ⚠ Конфликтов: {stats['validation_conflicts']}")
         print(f"{'='*60}")
 
