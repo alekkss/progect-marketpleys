@@ -30,16 +30,19 @@ class Config:
         "wildberries": {
             "sheet_name": "Товары",
             "header_row": 3,
+            "data_start_row": 5,
             "display_name": "WB Товары"
         },
         "ozon": {
             "sheet_name": "Шаблон",
             "header_row": 2,
+            "data_start_row": 4,
             "display_name": "Ozon Шаблон"
         },
         "yandex": {
             "sheet_name": "Данные о товарах",
             "header_row": 4,
+            "data_start_row": 7,
             "display_name": "Яндекс Данные"
         }
     }

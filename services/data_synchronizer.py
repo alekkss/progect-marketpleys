@@ -88,6 +88,18 @@ class DataSynchronizer:
             if article_col in dfs[marketplace].columns:
                 articles = dfs[marketplace][article_col].dropna().astype(str).str.strip()
                 articles = articles[articles != '']  # Убираем пустые
+                
+                # 🆕 ФИЛЬТРАЦИЯ: Убираем описания полей и слишком длинные строки
+                articles = articles[
+                    ~articles.str.contains(
+                        'идентифицировать|описание|заполнить|пример|название товара|по которому', 
+                        case=False, 
+                        na=False
+                    )
+                ]
+                # Убираем строки длиннее 50 символов (скорее всего описание)
+                articles = articles[articles.str.len() < 50]
+                
                 all_articles.update(articles.tolist())
                 logger.info(f"📊 {marketplace.upper()}: {len(articles)} артикулов")
         
@@ -104,14 +116,19 @@ class DataSynchronizer:
                 continue
             
             # Существующие артикулы
-            existing_articles = set(
-                dfs[marketplace][article_col]
-                .dropna()
-                .astype(str)
-                .str.strip()
-                .tolist()
-            )
-            existing_articles.discard('')  # Убираем пустые строки
+            existing_articles = dfs[marketplace][article_col].dropna().astype(str).str.strip()
+            existing_articles = existing_articles[existing_articles != '']
+            
+            # 🆕 ФИЛЬТРАЦИЯ: та же фильтрация что и выше
+            existing_articles = existing_articles[
+                ~existing_articles.str.contains(
+                    'идентифицировать|описание|заполнить|пример|название товара|по которому', 
+                    case=False, 
+                    na=False
+                )
+            ]
+            existing_articles = existing_articles[existing_articles.str.len() < 50]
+            existing_articles = set(existing_articles.tolist())
             
             # Находим недостающие
             missing_articles = all_articles - existing_articles
@@ -258,20 +275,17 @@ class DataSynchronizer:
     def _load_all_dataframes(self, file_paths: Dict[str, str]) -> Dict[str, pd.DataFrame]:
         """Загружает данные через openpyxl для сохранения форматов"""
         logger.info("📂 Загружаю данные из файлов...")
-        
         dfs = {}
+        
         for marketplace, file_path in file_paths.items():
             self.original_file_paths[marketplace] = file_path
             config = FILE_CONFIGS[marketplace]
             
-            # Читаем через openpyxl для сохранения форматов
             wb = load_workbook(file_path, data_only=True)
             ws = wb[config['sheet_name']]
             
-            # Загружаем validation для столбцов
             self._load_column_validations(ws, marketplace, config)
             
-            # Конвертируем в DataFrame
             data = []
             headers = []
             
@@ -279,8 +293,11 @@ class DataSynchronizer:
             for cell in ws[config['header_row']]:
                 headers.append(cell.value if cell.value else '')
             
+            # 🆕 ИСПРАВЛЕНИЕ: Используем data_start_row вместо header_row + 1
+            data_start = config.get('data_start_row', config['header_row'] + 1)
+            
             # Читаем данные
-            for row in ws.iter_rows(min_row=config['header_row'] + 1, values_only=True):
+            for row in ws.iter_rows(min_row=data_start, values_only=True):  # ← ИЗМЕНЕНО!
                 data.append(row)
             
             df = pd.DataFrame(data, columns=headers)
