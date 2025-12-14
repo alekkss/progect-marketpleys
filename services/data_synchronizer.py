@@ -1196,7 +1196,7 @@ class DataSynchronizer:
             
             print(f"\n[*] Обработка {config['display_name']}...")
             
-            # 🆕 ИСПРАВЛЕНИЕ: Сбрасываем индексы ПЕРЕД сохранением!
+            # Сбрасываем индексы ПЕРЕД сохранением!
             df = df.reset_index(drop=True)
             
             # Открываем ОРИГИНАЛЬНЫЙ файл через openpyxl
@@ -1208,9 +1208,30 @@ class DataSynchronizer:
             
             # Получаем номер строки заголовка
             header_row = config['header_row']
-            
-            # 🆕 ИСПРАВЛЕНИЕ: Используем data_start_row
             data_start_row = config.get('data_start_row', header_row + 1)
+            
+            # 🆕 ДОБАВЬ ЭТО: Расширяем лист если нужно
+            current_rows = ws.max_row
+            required_rows = data_start_row + len(df)
+            
+            if required_rows > current_rows:
+                print(f"[INFO] Расширяю лист: текущих строк = {current_rows}, требуется = {required_rows}")
+                # Копируем форматы из последней строки данных
+                last_data_row = current_rows
+                for row_idx in range(current_rows + 1, required_rows + 1):
+                    for col_idx in range(1, ws.max_column + 1):
+                        # Копируем стиль из строки выше (или из строки data_start_row)
+                        source_cell = ws.cell(row=last_data_row, column=col_idx)
+                        target_cell = ws.cell(row=row_idx, column=col_idx)
+                        
+                        # Копируем стиль
+                        if source_cell.has_style:
+                            target_cell.font = source_cell.font.copy()
+                            target_cell.border = source_cell.border.copy()
+                            target_cell.fill = source_cell.fill.copy()
+                            target_cell.number_format = source_cell.number_format
+                            target_cell.protection = source_cell.protection.copy()
+                            target_cell.alignment = source_cell.alignment.copy()
             
             # Создаем маппинг: название колонки -> номер колонки в Excel
             column_mapping = {}
@@ -1218,10 +1239,10 @@ class DataSynchronizer:
                 if cell.value:
                     column_mapping[str(cell.value).strip()] = col_idx
             
-            # 🆕 ИСПРАВЛЕНИЕ: Используем enumerate для правильного подсчёта строк!
+            # Используем enumerate для правильного подсчёта строк!
             for row_num, (df_row_idx, row) in enumerate(df.iterrows()):
                 # Вычисляем правильную строку в Excel
-                excel_row_idx = data_start_row + row_num  # ← ИСПРАВЛЕНО!
+                excel_row_idx = data_start_row + row_num
                 
                 for col_name, value in row.items():
                     if col_name not in column_mapping or pd.isna(value):
@@ -1236,7 +1257,7 @@ class DataSynchronizer:
                     if allowed_values:
                         print(f"[DEBUG] Столбец '{col_name}', строка {excel_row_idx}: найден validation с {len(allowed_values)} значениями")
                         print(f"[DEBUG] Текущее значение: '{value}'")
-                        print(f"[DEBUG] Допустимые значения: {allowed_values[:5]}...") # первые 5
+                        print(f"[DEBUG] Допустимые значения: {allowed_values[:5]}...")
                     
                     if allowed_values and self.ai_comparator:
                         # Есть validation - используем AI для сопоставления
@@ -1268,3 +1289,4 @@ class DataSynchronizer:
             print(f"  ⚠ Конфликтов с validation: {stats['validation_conflicts']}")
             print(f"  ⊘ Пропущено: {stats['skipped']}")
         print(f"{'='*60}")
+
