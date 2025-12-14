@@ -48,10 +48,8 @@ class DataSynchronizer:
     def _align_articles(self, dfs: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         """
         Выравнивает артикулы между маркетплейсами - добавляет отсутствующие строки
-        
         Args:
             dfs: словарь с DataFrame для каждого маркетплейса
-            
         Returns:
             Обновленные DataFrame с добавленными артикулами
         """
@@ -61,7 +59,6 @@ class DataSynchronizer:
         
         # Собираем все уникальные артикулы из всех маркетплейсов
         all_articles = set()
-        
         for marketplace in ['wildberries', 'ozon', 'yandex']:
             article_col = self.article_columns[marketplace]
             if article_col in dfs[marketplace].columns:
@@ -71,14 +68,13 @@ class DataSynchronizer:
                 # Фильтрация: Убираем описания полей и слишком длинные строки
                 articles = articles[
                     ~articles.str.contains(
-                        'идентифицировать|описание|заполнить|пример|название товара|по которому', 
-                        case=False, 
+                        'идентифицировать|описание|заполнить|пример|название товара|по которому',
+                        case=False,
                         na=False
                     )
                 ]
                 # Убираем строки длиннее 50 символов (скорее всего описание)
                 articles = articles[articles.str.len() < 50]
-                
                 all_articles.update(articles.tolist())
                 logger.info(f"📊 {marketplace.upper()}: {len(articles)} артикулов")
         
@@ -86,10 +82,8 @@ class DataSynchronizer:
         
         # Для каждого маркетплейса проверяем недостающие артикулы
         total_added = 0
-        
         for marketplace in ['wildberries', 'ozon', 'yandex']:
             article_col = self.article_columns[marketplace]
-            
             if article_col not in dfs[marketplace].columns:
                 logger.warning(f"⚠️ {marketplace.upper()}: столбец '{article_col}' не найден, пропускаю")
                 continue
@@ -101,16 +95,20 @@ class DataSynchronizer:
             # Фильтрация: та же фильтрация что и выше
             existing_articles = existing_articles[
                 ~existing_articles.str.contains(
-                    'идентифицировать|описание|заполнить|пример|название товара|по которому', 
-                    case=False, 
+                    'идентифицировать|описание|заполнить|пример|название товара|по которому',
+                    case=False,
                     na=False
                 )
             ]
             existing_articles = existing_articles[existing_articles.str.len() < 50]
-            existing_articles = set(existing_articles.tolist())
+            
+            # 🆕 ВАЖНО: Находим индекс последней заполненной строки
+            last_filled_idx = existing_articles.index[-1] if len(existing_articles) > 0 else -1
+            
+            existing_articles_set = set(existing_articles.tolist())
             
             # Находим недостающие
-            missing_articles = all_articles - existing_articles
+            missing_articles = all_articles - existing_articles_set
             
             if not missing_articles:
                 logger.info(f"✅ {marketplace.upper()}: все артикулы присутствуют")
@@ -127,14 +125,30 @@ class DataSynchronizer:
                 new_row[article_col] = article
                 new_rows.append(new_row)
             
-            # Добавляем новые строки в DataFrame
+            # 🆕 ИСПРАВЛЕНИЕ: Вставляем новые строки СРАЗУ ПОСЛЕ последней заполненной!
             if new_rows:
                 new_df = pd.DataFrame(new_rows)
-                dfs[marketplace] = pd.concat([dfs[marketplace], new_df], ignore_index=True)
-                total_added += len(new_rows)
                 
-                logger.info(f"   ✓ Добавлено {len(new_rows)} строк")
-                logger.info(f"   📊 Было: {len(dfs[marketplace]) - len(new_rows)}, стало: {len(dfs[marketplace])}")
+                # Разделяем DataFrame на две части:
+                # 1. До и включая последнюю заполненную строку
+                # 2. Все остальное (пустые строки)
+                
+                if last_filled_idx >= 0:
+                    # Есть заполненные строки - вставляем после них
+                    before = dfs[marketplace].iloc[:last_filled_idx + 1].copy()
+                    after = dfs[marketplace].iloc[last_filled_idx + 1:].copy()
+                    
+                    # Склеиваем: заполненные + новые + пустые
+                    dfs[marketplace] = pd.concat([before, new_df, after], ignore_index=True)
+                    
+                    logger.info(f" ✓ Добавлено {len(new_rows)} строк после строки {last_filled_idx + 1}")
+                else:
+                    # Нет заполненных строк - добавляем в начало
+                    dfs[marketplace] = pd.concat([new_df, dfs[marketplace]], ignore_index=True)
+                    logger.info(f" ✓ Добавлено {len(new_rows)} строк в начало")
+                
+                total_added += len(new_rows)
+                logger.info(f" 📊 Было: {len(dfs[marketplace]) - len(new_rows)}, стало: {len(dfs[marketplace])}")
         
         if total_added > 0:
             logger.info(f"\n✅ Итого добавлено {total_added} новых строк во все маркетплейсы")
