@@ -1177,7 +1177,6 @@ class DataSynchronizer:
         """Сохраняет синхронизированные данные в файлы С СОХРАНЕНИЕМ ФОРМАТОВ и AI-проверкой"""
         print("\n[*] Сохраняю синхронизированные данные...")
         
-        # ДОБАВЬТЕ ЭТУ ПРОВЕРКУ:
         print(f"[DEBUG] AI comparator доступен: {self.ai_comparator is not None}")
         
         stats = {
@@ -1197,16 +1196,21 @@ class DataSynchronizer:
             
             print(f"\n[*] Обработка {config['display_name']}...")
             
+            # 🆕 ИСПРАВЛЕНИЕ: Сбрасываем индексы ПЕРЕД сохранением!
+            df = df.reset_index(drop=True)
+            
             # Открываем ОРИГИНАЛЬНЫЙ файл через openpyxl
             wb = load_workbook(original_file)
             ws = wb[config['sheet_name']]
             
-            # ДОБАВЬТЕ ПРОВЕРКУ VALIDATIONS:
             validation_count = len(ws.data_validations.dataValidation)
             print(f"[DEBUG] Найдено data validations на листе: {validation_count}")
             
             # Получаем номер строки заголовка
             header_row = config['header_row']
+            
+            # 🆕 ИСПРАВЛЕНИЕ: Используем data_start_row
+            data_start_row = config.get('data_start_row', header_row + 1)
             
             # Создаем маппинг: название колонки -> номер колонки в Excel
             column_mapping = {}
@@ -1214,9 +1218,10 @@ class DataSynchronizer:
                 if cell.value:
                     column_mapping[str(cell.value).strip()] = col_idx
             
-            # Обновляем ТОЛЬКО ЗНАЧЕНИЯ ячеек, не трогая форматы
-            for df_row_idx, row in df.iterrows():
-                excel_row_idx = df_row_idx + header_row + 1
+            # 🆕 ИСПРАВЛЕНИЕ: Используем enumerate для правильного подсчёта строк!
+            for row_num, (df_row_idx, row) in enumerate(df.iterrows()):
+                # Вычисляем правильную строку в Excel
+                excel_row_idx = data_start_row + row_num  # ← ИСПРАВЛЕНО!
                 
                 for col_name, value in row.items():
                     if col_name not in column_mapping or pd.isna(value):
@@ -1225,30 +1230,25 @@ class DataSynchronizer:
                     excel_col_idx = column_mapping[col_name]
                     cell = ws.cell(row=excel_row_idx, column=excel_col_idx)
                     
-                    # # Пропускаем если значение не изменилось
-                    # if cell.value == value:
-                    #     continue
-                    
                     # Получаем список допустимых значений из validation
                     allowed_values = self._get_validation_list_values(ws, excel_row_idx, excel_col_idx)
                     
-                    # ДОБАВЬТЕ ОТЛАДКУ:
                     if allowed_values:
                         print(f"[DEBUG] Столбец '{col_name}', строка {excel_row_idx}: найден validation с {len(allowed_values)} значениями")
                         print(f"[DEBUG] Текущее значение: '{value}'")
-                        print(f"[DEBUG] Допустимые значения: {allowed_values[:5]}...")  # первые 5
+                        print(f"[DEBUG] Допустимые значения: {allowed_values[:5]}...") # первые 5
                     
                     if allowed_values and self.ai_comparator:
                         # Есть validation - используем AI для сопоставления
                         matched_value = self.ai_comparator.match_value_with_list(str(value), allowed_values)
-
+                        
                         if matched_value:
                             cell.value = matched_value
                             stats['saved'] += 1
                             stats['ai_matched'] += 1
                         else:
                             stats['validation_conflicts'] += 1
-                            print(f" [!] Конфликт: '{value}' не найдено в списке {allowed_values[:3]}... (строка {excel_row_idx}, {col_name})")
+                            print(f"  [!] Конфликт: '{value}' не найдено в списке {allowed_values[:3]}... (строка {excel_row_idx}, {col_name})")
                             stats['skipped'] += 1
                     else:
                         # Нет validation - записываем как есть
@@ -1265,6 +1265,6 @@ class DataSynchronizer:
         print(f"  ✓ Записано значений: {stats['saved']}")
         if self.ai_comparator:
             print(f"  🤖 AI-сопоставлений: {stats['ai_matched']}")
-        print(f"  ⚠ Конфликтов с validation: {stats['validation_conflicts']}")
-        print(f"  ⊘ Пропущено: {stats['skipped']}")
+            print(f"  ⚠ Конфликтов с validation: {stats['validation_conflicts']}")
+            print(f"  ⊘ Пропущено: {stats['skipped']}")
         print(f"{'='*60}")
