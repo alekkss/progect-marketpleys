@@ -336,7 +336,55 @@ class DataSynchronizer:
             wb.close()
             logger.info(f"✅ {config['display_name']}: загружено {len(df)} товаров")
         
+        # 🆕 СИНХРОНИЗИРУЕМ ДУБЛИКАТЫ СТОЛБЦОВ
+        dfs = self._sync_duplicate_columns(dfs)
+        
         return dfs
+    
+    def _sync_duplicate_columns(self, dfs: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+        """
+        Синхронизирует данные между дубликатами столбцов
+        Если в оригинальном столбце есть значение, копирует его в дубликат
+        """
+        for marketplace, df in dfs.items():
+            if marketplace not in self.original_column_names:
+                continue
+            
+            renamed_map = self.original_column_names[marketplace]['renamed']
+            
+            for duplicated_name, original_name in renamed_map.items():
+                # duplicated_name = "Вес с упаковкой (кг)1"
+                # original_name = "Вес с упаковкой (кг)"
+                
+                if original_name in df.columns and duplicated_name in df.columns:
+                    # Копируем значения из оригинального столбца в дубликат
+                    # Только там где в дубликате пусто
+                    mask_empty_duplicate = df[duplicated_name].isna() | (df[duplicated_name].astype(str).str.strip() == '')
+                    mask_has_original = df[original_name].notna() & (df[original_name].astype(str).str.strip() != '')
+                    
+                    # Копируем значения
+                    copy_mask = mask_empty_duplicate & mask_has_original
+                    df.loc[copy_mask, duplicated_name] = df.loc[copy_mask, original_name]
+                    
+                    copied_count = copy_mask.sum()
+                    if copied_count > 0:
+                        logger.info(f"✅ [{marketplace}] Скопировано {copied_count} значений: '{original_name}' → '{duplicated_name}'")
+                    
+                    # Также копируем в обратную сторону (если в дубликате есть, а в оригинале нет)
+                    mask_empty_original = df[original_name].isna() | (df[original_name].astype(str).str.strip() == '')
+                    mask_has_duplicate = df[duplicated_name].notna() & (df[duplicated_name].astype(str).str.strip() != '')
+                    
+                    copy_mask_reverse = mask_empty_original & mask_has_duplicate
+                    df.loc[copy_mask_reverse, original_name] = df.loc[copy_mask_reverse, duplicated_name]
+                    
+                    copied_count_reverse = copy_mask_reverse.sum()
+                    if copied_count_reverse > 0:
+                        logger.info(f"✅ [{marketplace}] Скопировано {copied_count_reverse} значений: '{duplicated_name}' → '{original_name}'")
+            
+            dfs[marketplace] = df
+        
+        return dfs
+
 
     def _load_column_validations(self, ws, marketplace: str, config: Dict):
         """
@@ -1229,6 +1277,9 @@ class DataSynchronizer:
         print("\n[*] Сохраняю синхронизированные данные...")
         
         print(f"[DEBUG] AI comparator доступен: {self.ai_comparator is not None}")
+        
+        # 🆕 СИНХРОНИЗИРУЕМ ДУБЛИКАТЫ ПЕРЕД СОХРАНЕНИЕМ
+        dfs = self._sync_duplicate_columns(dfs)
         
         stats = {
             'saved': 0,
