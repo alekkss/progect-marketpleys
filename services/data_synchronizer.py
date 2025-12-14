@@ -40,6 +40,7 @@ class DataSynchronizer:
         
         # ДОБАВЬТЕ: Кэш validation для каждого столбца
         self.column_validations = {}  # {marketplace: {column_name: [allowed_values]}}
+        self.original_column_names = {}
         # ДОБАВЬТЕ ЭТУ СТРОКУ:
         self.ai_validation_log = []  # Логи AI-сопоставлений
         logger.info("Инициализация DataSynchronizer")
@@ -88,27 +89,37 @@ class DataSynchronizer:
                 logger.warning(f"⚠️ {marketplace.upper()}: столбец '{article_col}' не найден, пропускаю")
                 continue
             
-            # 🆕 ВАЖНО: Сбрасываем индексы ПЕРЕД обработкой!
+            # Сбрасываем индексы ПЕРЕД обработкой!
             dfs[marketplace] = dfs[marketplace].reset_index(drop=True)
             
             # Существующие артикулы
-            existing_articles = dfs[marketplace][article_col].dropna().astype(str).str.strip()
-            existing_articles = existing_articles[existing_articles != '']
+            df = dfs[marketplace]
             
-            # Фильтрация: та же фильтрация что и выше
-            existing_articles = existing_articles[
-                ~existing_articles.str.contains(
+            # 🆕 НОВЫЙ ПОДХОД: Находим строки с заполненными артикулами напрямую в DataFrame
+            article_series = df[article_col].dropna().astype(str).str.strip()
+            article_series = article_series[article_series != '']
+            
+            # Фильтрация
+            valid_mask = (
+                ~article_series.str.contains(
                     'идентифицировать|описание|заполнить|пример|название товара|по которому',
                     case=False,
                     na=False
-                )
-            ]
-            existing_articles = existing_articles[existing_articles.str.len() < 50]
+                ) & 
+                (article_series.str.len() < 50)
+            )
+            article_series = article_series[valid_mask]
             
-            # 🆕 Находим индекс последней заполненной строки (теперь индексы уникальны!)
-            last_filled_idx = existing_articles.index[-1] if len(existing_articles) > 0 else -1
+            # 🆕 ИСПРАВЛЕНИЕ: Получаем ПОЗИЦИОННЫЙ индекс последней заполненной строки
+            if len(article_series) > 0:
+                # Получаем label индекс последней заполненной строки
+                last_label_idx = article_series.index[-1]
+                # Конвертируем в позиционный индекс
+                last_filled_position = df.index.get_loc(last_label_idx)
+            else:
+                last_filled_position = -1
             
-            existing_articles_set = set(existing_articles.tolist())
+            existing_articles_set = set(article_series.tolist())
             
             # Находим недостающие
             missing_articles = all_articles - existing_articles_set
@@ -123,7 +134,7 @@ class DataSynchronizer:
             new_rows = []
             for article in sorted(missing_articles):
                 # Создаем пустую строку со всеми столбцами
-                new_row = {col: None for col in dfs[marketplace].columns}
+                new_row = {col: None for col in df.columns}
                 # Заполняем только артикул
                 new_row[article_col] = article
                 new_rows.append(new_row)
@@ -132,26 +143,23 @@ class DataSynchronizer:
             if new_rows:
                 new_df = pd.DataFrame(new_rows)
                 
-                # Разделяем DataFrame на две части:
-                # 1. До и включая последнюю заполненную строку
-                # 2. Все остальное (пустые строки)
-                
-                if last_filled_idx >= 0:
+                if last_filled_position >= 0:
                     # Есть заполненные строки - вставляем после них
-                    before = dfs[marketplace].iloc[:last_filled_idx + 1].copy()
-                    after = dfs[marketplace].iloc[last_filled_idx + 1:].copy()
+                    # Используем ПОЗИЦИОННЫЙ индекс!
+                    before = df.iloc[:last_filled_position + 1].copy()
+                    after = df.iloc[last_filled_position + 1:].copy()
                     
-                    # Склеиваем: заполненные + новые + пустые (индексы уже уникальны!)
+                    # Склеиваем: заполненные + новые + пустые
                     dfs[marketplace] = pd.concat([before, new_df, after], ignore_index=True)
                     
-                    logger.info(f" ✓ Добавлено {len(new_rows)} строк после строки {last_filled_idx + 1}")
+                    logger.info(f" ✓ Добавлено {len(new_rows)} строк после позиции {last_filled_position}")
                 else:
                     # Нет заполненных строк - добавляем в начало
-                    dfs[marketplace] = pd.concat([new_df, dfs[marketplace]], ignore_index=True)
+                    dfs[marketplace] = pd.concat([new_df, df], ignore_index=True)
                     logger.info(f" ✓ Добавлено {len(new_rows)} строк в начало")
                 
                 total_added += len(new_rows)
-                logger.info(f" 📊 Было: {len(dfs[marketplace]) - len(new_rows)}, стало: {len(dfs[marketplace])}")
+                logger.info(f" 📊 Было: {len(df)}, стало: {len(dfs[marketplace])}")
         
         if total_added > 0:
             logger.info(f"\n✅ Итого добавлено {total_added} новых строк во все маркетплейсы")
@@ -271,7 +279,10 @@ class DataSynchronizer:
     def _load_all_dataframes(self, file_paths: Dict[str, str]) -> Dict[str, pd.DataFrame]:
         """Загружает данные через openpyxl для сохранения форматов"""
         logger.info("📂 Загружаю данные из файлов...")
+        
         dfs = {}
+        # 🆕 Словарь для хранения оригинальных названий столбцов
+        self.original_column_names = {}
         
         for marketplace, file_path in file_paths.items():
             self.original_file_paths[marketplace] = file_path
@@ -289,17 +300,40 @@ class DataSynchronizer:
             for cell in ws[config['header_row']]:
                 headers.append(cell.value if cell.value else '')
             
-            # 🆕 ИСПРАВЛЕНИЕ: Используем data_start_row вместо header_row + 1
+            # 🆕 ОБРАБОТКА ДУБЛИКАТОВ СТОЛБЦОВ
+            original_headers = headers.copy()
+            seen = {}
+            renamed_columns = {}
+            
+            for i, col in enumerate(headers):
+                if col in seen:
+                    # Нашли дубликат - добавляем суффикс
+                    seen[col] += 1
+                    new_name = f"{col}{seen[col]}"
+                    logger.warning(f"⚠️ [{marketplace}] Дубликат столбца '{col}' переименован в '{new_name}'")
+                    headers[i] = new_name
+                    renamed_columns[new_name] = col  # Сохраняем маппинг для возврата
+                else:
+                    seen[col] = 0
+            
+            # Сохраняем информацию для восстановления
+            if renamed_columns:
+                self.original_column_names[marketplace] = {
+                    'renamed': renamed_columns,
+                    'all_headers': original_headers
+                }
+            
+            # Используем data_start_row вместо header_row + 1
             data_start = config.get('data_start_row', config['header_row'] + 1)
             
             # Читаем данные
-            for row in ws.iter_rows(min_row=data_start, values_only=True):  # ← ИЗМЕНЕНО!
+            for row in ws.iter_rows(min_row=data_start, values_only=True):
                 data.append(row)
             
             df = pd.DataFrame(data, columns=headers)
             dfs[marketplace] = df
-            wb.close()
             
+            wb.close()
             logger.info(f"✅ {config['display_name']}: загружено {len(df)} товаров")
         
         return dfs
@@ -1216,6 +1250,13 @@ class DataSynchronizer:
             # Сбрасываем индексы ПЕРЕД сохранением!
             df = df.reset_index(drop=True)
             
+            # 🆕 ВОССТАНАВЛИВАЕМ ОРИГИНАЛЬНЫЕ НАЗВАНИЯ СТОЛБЦОВ
+            if marketplace in self.original_column_names:
+                renamed_map = self.original_column_names[marketplace]['renamed']
+                # Переименовываем обратно: "Вес с упаковкой (кг)1" → "Вес с упаковкой (кг)"
+                df = df.rename(columns=renamed_map)
+                logger.info(f"✅ [{marketplace}] Восстановлены оригинальные названия {len(renamed_map)} столбцов")
+            
             # Открываем ОРИГИНАЛЬНЫЙ файл через openpyxl
             wb = load_workbook(original_file)
             ws = wb[config['sheet_name']]
@@ -1227,7 +1268,7 @@ class DataSynchronizer:
             header_row = config['header_row']
             data_start_row = config.get('data_start_row', header_row + 1)
             
-            # 🆕 ДОБАВЬ ЭТО: Расширяем лист если нужно
+            # Расширяем лист если нужно
             current_rows = ws.max_row
             required_rows = data_start_row + len(df)
             
@@ -1237,7 +1278,7 @@ class DataSynchronizer:
                 last_data_row = current_rows
                 for row_idx in range(current_rows + 1, required_rows + 1):
                     for col_idx in range(1, ws.max_column + 1):
-                        # Копируем стиль из строки выше (или из строки data_start_row)
+                        # Копируем стиль из строки выше
                         source_cell = ws.cell(row=last_data_row, column=col_idx)
                         target_cell = ws.cell(row=row_idx, column=col_idx)
                         
@@ -1250,11 +1291,25 @@ class DataSynchronizer:
                             target_cell.protection = source_cell.protection.copy()
                             target_cell.alignment = source_cell.alignment.copy()
             
-            # Создаем маппинг: название колонки -> номер колонки в Excel
+            # 🆕 СОЗДАЁМ МАППИНГ С УЧЁТОМ ДУБЛИКАТОВ
+            # В Excel может быть два столбца "Вес с упаковкой (кг)"
+            # Нужно правильно определить какой столбец какой
             column_mapping = {}
+            header_count = {}
+            
             for col_idx, cell in enumerate(ws[header_row], start=1):
                 if cell.value:
-                    column_mapping[str(cell.value).strip()] = col_idx
+                    col_name = str(cell.value).strip()
+                    
+                    # Если это дубликат столбца
+                    if col_name in header_count:
+                        header_count[col_name] += 1
+                        # Создаём временное имя для маппинга
+                        temp_name = f"{col_name}{header_count[col_name]}"
+                        column_mapping[temp_name] = col_idx
+                    else:
+                        header_count[col_name] = 0
+                        column_mapping[col_name] = col_idx
             
             # Используем enumerate для правильного подсчёта строк!
             for row_num, (df_row_idx, row) in enumerate(df.iterrows()):
@@ -1270,11 +1325,6 @@ class DataSynchronizer:
                     
                     # Получаем список допустимых значений из validation
                     allowed_values = self._get_validation_list_values(ws, excel_row_idx, excel_col_idx)
-                    
-                    if allowed_values:
-                        print(f"[DEBUG] Столбец '{col_name}', строка {excel_row_idx}: найден validation с {len(allowed_values)} значениями")
-                        print(f"[DEBUG] Текущее значение: '{value}'")
-                        print(f"[DEBUG] Допустимые значения: {allowed_values[:5]}...")
                     
                     if allowed_values and self.ai_comparator:
                         # Есть validation - используем AI для сопоставления
