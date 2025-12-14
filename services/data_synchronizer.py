@@ -45,6 +45,87 @@ class DataSynchronizer:
         logger.info("Инициализация DataSynchronizer")
         logger.debug(f"AI comparator передан: {ai_comparator is not None}")
     
+    def _align_articles(self, dfs: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+        """
+        Выравнивает артикулы между маркетплейсами - добавляет отсутствующие строки
+        
+        Args:
+            dfs: словарь с DataFrame для каждого маркетплейса
+            
+        Returns:
+            Обновленные DataFrame с добавленными артикулами
+        """
+        logger.info("\n" + "="*60)
+        logger.info("ВЫРАВНИВАНИЕ АРТИКУЛОВ МЕЖДУ МАРКЕТПЛЕЙСАМИ")
+        logger.info("="*60)
+        
+        # Собираем все уникальные артикулы из всех маркетплейсов
+        all_articles = set()
+        
+        for marketplace in ['wildberries', 'ozon', 'yandex']:
+            article_col = self.article_columns[marketplace]
+            if article_col in dfs[marketplace].columns:
+                articles = dfs[marketplace][article_col].dropna().astype(str).str.strip()
+                articles = articles[articles != '']  # Убираем пустые
+                all_articles.update(articles.tolist())
+                logger.info(f"📊 {marketplace.upper()}: {len(articles)} артикулов")
+        
+        logger.info(f"\n🔍 Всего уникальных артикулов: {len(all_articles)}")
+        
+        # Для каждого маркетплейса проверяем недостающие артикулы
+        total_added = 0
+        
+        for marketplace in ['wildberries', 'ozon', 'yandex']:
+            article_col = self.article_columns[marketplace]
+            
+            if article_col not in dfs[marketplace].columns:
+                logger.warning(f"⚠️ {marketplace.upper()}: столбец '{article_col}' не найден, пропускаю")
+                continue
+            
+            # Существующие артикулы
+            existing_articles = set(
+                dfs[marketplace][article_col]
+                .dropna()
+                .astype(str)
+                .str.strip()
+                .tolist()
+            )
+            existing_articles.discard('')  # Убираем пустые строки
+            
+            # Находим недостающие
+            missing_articles = all_articles - existing_articles
+            
+            if not missing_articles:
+                logger.info(f"✅ {marketplace.upper()}: все артикулы присутствуют")
+                continue
+            
+            logger.info(f"\n➕ {marketplace.upper()}: добавляю {len(missing_articles)} артикулов")
+            
+            # Создаем новые строки для недостающих артикулов
+            new_rows = []
+            for article in sorted(missing_articles):
+                # Создаем пустую строку со всеми столбцами
+                new_row = {col: None for col in dfs[marketplace].columns}
+                # Заполняем только артикул
+                new_row[article_col] = article
+                new_rows.append(new_row)
+            
+            # Добавляем новые строки в DataFrame
+            if new_rows:
+                new_df = pd.DataFrame(new_rows)
+                dfs[marketplace] = pd.concat([dfs[marketplace], new_df], ignore_index=True)
+                total_added += len(new_rows)
+                
+                logger.info(f"   ✓ Добавлено {len(new_rows)} строк")
+                logger.info(f"   📊 Было: {len(dfs[marketplace]) - len(new_rows)}, стало: {len(dfs[marketplace])}")
+        
+        if total_added > 0:
+            logger.info(f"\n✅ Итого добавлено {total_added} новых строк во все маркетплейсы")
+        else:
+            logger.info(f"\n✅ Выравнивание не требуется - все артикулы присутствуют")
+        
+        return dfs
+    
     
     def _detect_unit(self, column_name: str) -> Optional[str]:
         """
@@ -359,6 +440,9 @@ class DataSynchronizer:
             'ozon': dfs['ozon'].copy(),
             'yandex': dfs['yandex'].copy()
         }
+        
+        # 🆕 НОВОЕ: Выравниваем артикулы ПЕРЕД синхронизацией
+        synced_dfs = self._align_articles(synced_dfs)
         
         # Синхронизируем совпадения всех трех маркетплейсов
         print("\n[*] Синхронизирую совпадения всех 3 маркетплейсов...")
