@@ -288,7 +288,7 @@ class DimensionsSynchronizer:
                     
                     if pd.isna(df_yandex.at[idx, yandex_col]) or not str(df_yandex.at[idx, yandex_col]).strip():
                         composite = cls.format_composite_dimensions(
-                            dimensions['length'],
+                            dimensions['length'],  # уже в см (конвертировали при чтении)
                             dimensions['width'],
                             dimensions['height']
                         )
@@ -296,7 +296,7 @@ class DimensionsSynchronizer:
                         synced_count += 1
                         logger.info(f"[Ozon→Яндекс] {article}: {composite}")
             
-            # В WB
+            # В WB (ИСПРАВЛЕНО: данные уже в см после конвертации!)
             if 'wildberries' in dfs:
                 df_wb = dfs['wildberries']
                 wb_map = cls.DIMENSIONS_MAPPING['wildberries']
@@ -305,17 +305,22 @@ class DimensionsSynchronizer:
                 if mask.any():
                     idx = df_wb[mask].index[0]
                     
+                    # ✅ dimensions уже в см (конвертировали при чтении из Ozon)
+                    # Просто записываем как есть
                     if pd.isna(df_wb.at[idx, wb_map['length']]) or not str(df_wb.at[idx, wb_map['length']]).strip():
-                        df_wb.at[idx, wb_map['length']] = dimensions['length']
+                        df_wb.at[idx, wb_map['length']] = dimensions['length']  # уже в см!
                         synced_count += 1
+                        logger.info(f"[Ozon→WB] {article}: Длина {dimensions['length']} см")
                     
                     if pd.isna(df_wb.at[idx, wb_map['width']]) or not str(df_wb.at[idx, wb_map['width']]).strip():
-                        df_wb.at[idx, wb_map['width']] = dimensions['width']
+                        df_wb.at[idx, wb_map['width']] = dimensions['width']  # уже в см!
                         synced_count += 1
+                        logger.info(f"[Ozon→WB] {article}: Ширина {dimensions['width']} см")
                     
                     if pd.isna(df_wb.at[idx, wb_map['height']]) or not str(df_wb.at[idx, wb_map['height']]).strip():
-                        df_wb.at[idx, wb_map['height']] = dimensions['height']
+                        df_wb.at[idx, wb_map['height']] = dimensions['height']  # уже в см!
                         synced_count += 1
+                        logger.info(f"[Ozon→WB] {article}: Высота {dimensions['height']} см")
         
         logger.info(f"✅ Габариты: синхронизировано {synced_count} значений")
         return synced_count
