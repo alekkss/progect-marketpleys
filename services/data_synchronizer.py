@@ -572,7 +572,13 @@ class DataSynchronizer:
         
         # Синхронизируем данные
         synced_dfs = self._sync_all_matches(dfs)
-        
+
+        # ⭐ ПОСТОБРАБОТКА: Конвертация габаритов WB (мм → см если из Ozon)
+        logger.info("\n[*] Постобработка габаритов WB...")
+        converted_count = self._postprocess_wb_dimensions(synced_dfs)
+        if converted_count > 0:
+            logger.info(f"✅ Сконвертировано {converted_count} значений габаритов (мм → см)")
+
         # Сохраняем результаты
         if output_paths:
             self._save_results(synced_dfs, output_paths)
@@ -1021,7 +1027,7 @@ class DataSynchronizer:
                             value_to_set = pd.to_numeric(value_to_set, errors='coerce')
                         dfs['wildberries'].at[idx, col_wb] = value_to_set
                         filled_count += 1
-                        self._log_change('wildberries', article, col_wb, value_to_set)
+                        self._log_change('wildberries', article, col_wb, value_to_set, source_marketplace='ozon' if source_unit == unit_ozon else ('yandex' if source_unit == unit_yandex else 'wildberries'))
                     except Exception:
                         pass
             
@@ -1055,7 +1061,7 @@ class DataSynchronizer:
                             value_to_set = pd.to_numeric(value_to_set, errors='coerce')
                         dfs['ozon'].at[idx, col_ozon] = value_to_set
                         filled_count += 1
-                        self._log_change('ozon', article, col_ozon, value_to_set)
+                        self._log_change('ozon', article, col_ozon, value_to_set, source_marketplace='wildberries' if source_unit == unit_wb else ('yandex' if source_unit == unit_yandex else 'ozon'))
                     except Exception:
                         pass
             
@@ -1089,7 +1095,7 @@ class DataSynchronizer:
                             value_to_set = pd.to_numeric(value_to_set, errors='coerce')
                         dfs['yandex'].at[idx, col_yandex] = value_to_set
                         filled_count += 1
-                        self._log_change('yandex', article, col_yandex, value_to_set)
+                        self._log_change('yandex', article, col_yandex, value_to_set, source_marketplace='wildberries' if source_unit == unit_wb else ('ozon' if source_unit == unit_ozon else 'yandex'))
                     except Exception:
                         pass
         
@@ -1257,7 +1263,7 @@ class DataSynchronizer:
                             value_to_set = pd.to_numeric(value_to_set, errors='coerce')
                         dfs[mp1].at[idx, col1] = value_to_set
                         filled_count += 1
-                        self._log_change(mp1, article, col1, value_to_set)
+                        self._log_change(mp1, article, col1, value_to_set, source_marketplace=mp2)
                     except Exception:
                         pass
                 
@@ -1286,7 +1292,7 @@ class DataSynchronizer:
                             value_to_set = pd.to_numeric(value_to_set, errors='coerce')
                         dfs[mp2].at[idx, col2] = value_to_set
                         filled_count += 1
-                        self._log_change(mp2, article, col2, value_to_set)
+                        self._log_change(mp2, article, col2, value_to_set, source_marketplace=mp1)
                     except Exception:
                         pass
         
@@ -1318,13 +1324,72 @@ class DataSynchronizer:
         
         return article_map
     
-    def _log_change(self, marketplace: str, article: str, column: str, new_value):
+    def _log_change(self, marketplace: str, article: str, column: str, new_value, source_marketplace: str = None):
         """Логирует произведенное изменение"""
         self.changes_log[marketplace].append({
             'article': article,
             'column': column,
-            'new_value': str(new_value)
+            'new_value': str(new_value),
+            'source_marketplace': source_marketplace  # ← ДОБАВЛЕНО
         })
+    
+    def _postprocess_wb_dimensions(self, dfs: Dict[str, pd.DataFrame]) -> int:
+        """
+        Постобработка габаритов WB: конвертация из мм в см если данные пришли из Ozon
+        
+        Returns:
+            Количество сконвертированных значений
+        """
+        if 'wildberries' not in dfs:
+            return 0
+        
+        converted_count = 0
+        df_wb = dfs['wildberries']
+        
+        # Столбцы габаритов WB
+        wb_dimension_columns = [
+            'Длина упаковки (целое число)',
+            'Ширина упаковки (целое число)',
+            'Высота упаковки (целое число)'
+        ]
+        
+        # Проверяем наличие столбцов
+        for col_name in wb_dimension_columns:
+            if col_name not in df_wb.columns:
+                return 0
+        
+        # Проходим по всем изменениям WB из Ozon
+        if 'wildberries' not in self.changes_log:
+            return 0
+        
+        for change in self.changes_log['wildberries']:
+            # Проверяем: это габарит И источник - Ozon
+            if (change.get('source_marketplace') == 'ozon' and 
+                change.get('column') in wb_dimension_columns):
+                
+                article = change.get('article')
+                column = change.get('column')
+                
+                # Находим строку с этим артикулом
+                mask = df_wb[self.article_columns['wildberries']].astype(str).str.strip() == str(article).strip()
+                if mask.any():
+                    idx = df_wb[mask].index[0]
+                    value = df_wb.at[idx, column]
+                    
+                    # Конвертируем если >= 100 (защита от повторной конвертации)
+                    if pd.notna(value):
+                        try:
+                            numeric_value = float(value)
+                            if numeric_value >= 100:
+                                converted_value = round(numeric_value / 10, 1)
+                                df_wb.at[idx, column] = converted_value
+                                converted_count += 1
+                                logger.info(f"  ✓ [{article}] {column}: {numeric_value} мм → {converted_value} см")
+                        except (ValueError, TypeError):
+                            pass
+        
+        return converted_count
+
     
     def _get_validation_list_values(self, ws, row_idx: int, col_idx: int) -> List[str]:
         """
