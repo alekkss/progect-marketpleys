@@ -1268,7 +1268,8 @@ class DataSynchronizer:
         
         # Wildberries: только ПЕРВОЕ значение
         if marketplace == 'wildberries':
-            return self._validate_with_ai(parts[0], marketplace, column_name)
+            validated = self._validate_with_ai(parts[0], marketplace, column_name)
+            return validated if validated else parts[0]  # Если валидация не прошла, берём как есть
         
         # Ozon и Яндекс: валидируем каждое значение
         validated_parts = []
