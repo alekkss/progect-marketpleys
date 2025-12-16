@@ -1016,7 +1016,7 @@ class DataSynchronizer:
                     converted_value = self._convert_value(source_value, source_unit, unit_wb)
                     
                     # Проверка validation через AI
-                    final_value = self._validate_with_ai(converted_value, 'wildberries', col_wb)
+                    final_value = self._validate_multiple_values(converted_value, 'wildberries', col_wb)
                     
                     try:
                         # ИСПРАВЛЕНИЕ:
@@ -1052,7 +1052,7 @@ class DataSynchronizer:
                     col_dtype = series.dtype
                     converted_value = self._convert_value(source_value, source_unit, unit_ozon)
                     
-                    final_value = self._validate_with_ai(converted_value, 'ozon', col_ozon)
+                    final_value = self._validate_multiple_values(converted_value, 'ozon', col_ozon)
                     
                     try:
                         # ИСПРАВЛЕНИЕ:
@@ -1125,7 +1125,7 @@ class DataSynchronizer:
                     
                     # Обычная логика для остальных столбцов
                     converted_value = self._convert_value(source_value, source_unit, unit_yandex)
-                    final_value = self._validate_with_ai(converted_value, 'yandex', col_yandex)
+                    final_value = self._validate_multiple_values(converted_value, 'yandex', col_yandex)
                     
                     try:
                         if final_value:
@@ -1237,6 +1237,57 @@ class DataSynchronizer:
         else:
             logger.warning(f"❌ [AI] Не найдено совпадение для '{value_str}'")
             return None
+    
+    def _validate_multiple_values(self, value, marketplace: str, column_name: str) -> Optional[str]:
+        """
+        Валидирует значения с разделителями (;) и форматирует согласно требованиям маркетплейса
+        
+        Args:
+            value: исходное значение (может содержать ";")
+            marketplace: 'wildberries', 'ozon', 'yandex'
+            column_name: название столбца
+        
+        Returns:
+            Отформатированная строка или None
+        """
+        if not value:
+            return None
+        
+        value_str = str(value).strip()
+        
+        # Проверяем есть ли разделители
+        if ';' not in value_str:
+            # Одно значение - обычная валидация
+            return self._validate_with_ai(value_str, marketplace, column_name)
+        
+        # Множественные значения - разбиваем по ";"
+        parts = [part.strip() for part in value_str.split(';') if part.strip()]
+        
+        if not parts:
+            return None
+        
+        # Wildberries: только ПЕРВОЕ значение
+        if marketplace == 'wildberries':
+            return self._validate_with_ai(parts[0], marketplace, column_name)
+        
+        # Ozon и Яндекс: валидируем каждое значение
+        validated_parts = []
+        for part in parts:
+            validated = self._validate_with_ai(part, marketplace, column_name)
+            if validated and validated not in validated_parts:  # Избегаем дубликатов
+                validated_parts.append(validated)
+        
+        if not validated_parts:
+            return None
+        
+        # Форматируем согласно требованиям маркетплейса
+        if marketplace == 'yandex':
+            return ', '.join(validated_parts)  # "Красный, Синий"
+        elif marketplace == 'ozon':
+            return '; '.join(validated_parts)  # "Красный; Синий"
+        
+        return validated_parts[0]  # На всякий случай
+
 
     
     def _sync_two_columns(
@@ -1294,7 +1345,7 @@ class DataSynchronizer:
                     col_dtype = series.dtype  # ✅
                     converted_value = self._convert_value(val2, unit2, unit1)
                     
-                    final_value = self._validate_with_ai(converted_value, mp1, col1)
+                    final_value = self._validate_multiple_values(converted_value, mp1, col1)
                     
                     try:
                         # ИСПРАВЛЕНИЕ:
@@ -1323,7 +1374,7 @@ class DataSynchronizer:
                     col_dtype = series.dtype  # ✅
                     converted_value = self._convert_value(val1, unit1, unit2)
                     
-                    final_value = self._validate_with_ai(converted_value, mp2, col2)
+                    final_value = self._validate_multiple_values(converted_value, mp2, col2)
                     
                     try:
                         # ИСПРАВЛЕНИЕ:
