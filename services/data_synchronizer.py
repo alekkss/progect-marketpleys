@@ -838,9 +838,7 @@ class DataSynchronizer:
     
     def _sync_three_way_matches(self, dfs: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         """Синхронизирует совпадения всех трех маркетплейсов"""
-        
         matches = self.comparison_result.get('matches_all_three', [])
-        
         if not matches:
             print("  Нет совпадений для синхронизации")
             return dfs
@@ -857,21 +855,28 @@ class DataSynchronizer:
                 continue
             
             # Пропускаем исключенные столбцы
-            if (is_excluded_column(col_wb) or 
-                is_excluded_column(col_ozon) or 
+            if (is_excluded_column(col_wb) or
+                is_excluded_column(col_ozon) or
                 is_excluded_column(col_yandex)):
                 skipped_count += 1
                 continue
             
+            # ⭐ ДОБАВЬ ЭТУ ПРОВЕРКУ:
+            # Пропускаем габариты - они обрабатываются через DimensionsSynchronizer
+            if col_yandex == "Габариты с упаковкой, см":
+                skipped_count += 1
+                logger.info(f"⏭️  Пропущено (габариты): {col_wb} ↔ {col_ozon} ↔ {col_yandex}")
+                continue
+            
             # Проверяем, что столбцы существуют
-            if (col_wb not in dfs['wildberries'].columns or 
-                col_ozon not in dfs['ozon'].columns or 
+            if (col_wb not in dfs['wildberries'].columns or
+                col_ozon not in dfs['ozon'].columns or
                 col_yandex not in dfs['yandex'].columns):
                 continue
             
             # Синхронизируем данные между тремя файлами
             filled = self._sync_three_columns(
-                dfs, 
+                dfs,
                 col_wb, col_ozon, col_yandex
             )
             
@@ -883,6 +888,7 @@ class DataSynchronizer:
         if skipped_count > 0:
             print(f"[!] Пропущено {skipped_count} исключенных столбцов")
         print(f"[+] Всего заполнено {total_filled} пустых ячеек в совпадениях всех 3 маркетплейсов")
+        
         return dfs
     
     def _sync_two_way_matches(self, dfs: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
