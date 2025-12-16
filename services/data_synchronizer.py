@@ -156,12 +156,11 @@ class DimensionsSynchronizer:
                 article = row.get(article_cols['wildberries'])
                 if pd.notna(article) and str(article).strip():
                     article_str = str(article).strip()
-                    
                     length = row.get(wb_map['length'])
                     width = row.get(wb_map['width'])
                     height = row.get(wb_map['height'])
                     
-                    # Проверяем что все три значения заполнены
+                    # ✅ ИСПРАВЛЕНИЕ: Проверяем что ВСЕ ТРИ значения заполнены
                     if all(pd.notna(v) and str(v).strip() for v in [length, width, height]):
                         try:
                             wb_dimensions[article_str] = {
@@ -274,18 +273,16 @@ class DimensionsSynchronizer:
         
         # 6. СИНХРОНИЗАЦИЯ: Ozon → Яндекс (и в WB если нет)
         for article, dimensions in ozon_dimensions.items():
-            if article in yandex_dimensions or article in wb_dimensions:
-                continue  # Уже есть данные
+           
             
             # В Яндекс
             if 'yandex' in dfs:
                 df_yandex = dfs['yandex']
                 yandex_col = cls.DIMENSIONS_MAPPING['yandex']['composite']
-                
                 mask = df_yandex[article_cols['yandex']].astype(str).str.strip() == article
+                
                 if mask.any():
                     idx = df_yandex[mask].index[0]
-                    
                     if pd.isna(df_yandex.at[idx, yandex_col]) or not str(df_yandex.at[idx, yandex_col]).strip():
                         composite = cls.format_composite_dimensions(
                             dimensions['length'],
@@ -296,26 +293,30 @@ class DimensionsSynchronizer:
                         synced_count += 1
                         logger.info(f"[Ozon→Яндекс] {article}: {composite}")
             
-            # В WB
+            # В WB (теперь это будет работать всегда!)
             if 'wildberries' in dfs:
                 df_wb = dfs['wildberries']
                 wb_map = cls.DIMENSIONS_MAPPING['wildberries']
-                
                 mask = df_wb[article_cols['wildberries']].astype(str).str.strip() == article
+                
                 if mask.any():
                     idx = df_wb[mask].index[0]
                     
+                    # Заполняем ТОЛЬКО пустые поля
                     if pd.isna(df_wb.at[idx, wb_map['length']]) or not str(df_wb.at[idx, wb_map['length']]).strip():
                         df_wb.at[idx, wb_map['length']] = dimensions['length']
                         synced_count += 1
+                        logger.info(f"[Ozon→WB] {article}: length={dimensions['length']}")
                     
                     if pd.isna(df_wb.at[idx, wb_map['width']]) or not str(df_wb.at[idx, wb_map['width']]).strip():
                         df_wb.at[idx, wb_map['width']] = dimensions['width']
                         synced_count += 1
+                        logger.info(f"[Ozon→WB] {article}: width={dimensions['width']}")
                     
                     if pd.isna(df_wb.at[idx, wb_map['height']]) or not str(df_wb.at[idx, wb_map['height']]).strip():
                         df_wb.at[idx, wb_map['height']] = dimensions['height']
                         synced_count += 1
+                        logger.info(f"[Ozon→WB] {article}: height={dimensions['height']}")
         
         logger.info(f"✅ Габариты: синхронизировано {synced_count} значений")
         return synced_count
@@ -863,10 +864,10 @@ class DataSynchronizer:
             
             # ⭐ ДОБАВЬ ЭТУ ПРОВЕРКУ:
             # Пропускаем габариты - они обрабатываются через DimensionsSynchronizer
-            if col_yandex == "Габариты с упаковкой, см":
-                skipped_count += 1
-                logger.info(f"⏭️  Пропущено (габариты): {col_wb} ↔ {col_ozon} ↔ {col_yandex}")
-                continue
+            # if col_yandex == "Габариты с упаковкой, см":
+            #     skipped_count += 1
+            #     logger.info(f"⏭️  Пропущено (габариты): {col_wb} ↔ {col_ozon} ↔ {col_yandex}")
+            #     continue
             
             # Проверяем, что столбцы существуют
             if (col_wb not in dfs['wildberries'].columns or
