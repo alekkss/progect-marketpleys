@@ -1084,12 +1084,50 @@ class DataSynchronizer:
                     if isinstance(series, pd.DataFrame):
                         series = series.iloc[:, 0]
                     col_dtype = series.dtype
-                    converted_value = self._convert_value(source_value, source_unit, unit_yandex)
                     
+                    # ✅ ПРОВЕРКА: Это композитный столбец габаритов?
+                    if col_yandex == "Габариты с упаковкой, см":
+                        # Формируем композитное значение из трёх измерений
+                        # Определяем источник (WB или Ozon)
+                        if source_unit == unit_wb and article in wb_data:
+                            # Источник - WB
+                            wb_row = dfs['wildberries'][dfs['wildberries'][self.article_columns['wildberries']].astype(str).str.strip() == article].iloc[0]
+                            length = wb_row.get('Длина упаковки (целое число)', None)
+                            width = wb_row.get('Ширина упаковки (целое число)', None)
+                            height = wb_row.get('Высота упаковки (целое число)', None)
+                            
+                            if all(pd.notna(v) for v in [length, width, height]):
+                                composite = DimensionsSynchronizer.format_composite_dimensions(
+                                    float(length), float(width), float(height)
+                                )
+                                dfs['yandex'].at[idx, col_yandex] = composite
+                                filled_count += 1
+                                self._log_change('yandex', article, col_yandex, composite, source_marketplace='wildberries')
+                                continue
+                                
+                        elif source_unit == unit_ozon and article in ozon_data:
+                            # Источник - Ozon (конвертируем мм → см)
+                            ozon_row = dfs['ozon'][dfs['ozon'][self.article_columns['ozon']].astype(str).str.strip() == article].iloc[0]
+                            length_mm = ozon_row.get('Длина упаковки, мм*', None)
+                            width_mm = ozon_row.get('Ширина упаковки, мм*', None)
+                            height_mm = ozon_row.get('Высота упаковки, мм*', None)
+                            
+                            if all(pd.notna(v) for v in [length_mm, width_mm, height_mm]):
+                                composite = DimensionsSynchronizer.format_composite_dimensions(
+                                    DimensionsSynchronizer.mm_to_cm(float(length_mm)),
+                                    DimensionsSynchronizer.mm_to_cm(float(width_mm)),
+                                    DimensionsSynchronizer.mm_to_cm(float(height_mm))
+                                )
+                                dfs['yandex'].at[idx, col_yandex] = composite
+                                filled_count += 1
+                                self._log_change('yandex', article, col_yandex, composite, source_marketplace='ozon')
+                                continue
+                    
+                    # Обычная логика для остальных столбцов
+                    converted_value = self._convert_value(source_value, source_unit, unit_yandex)
                     final_value = self._validate_with_ai(converted_value, 'yandex', col_yandex)
                     
                     try:
-                        # ИСПРАВЛЕНИЕ:
                         if final_value:
                             value_to_set = final_value
                         elif not self.column_validations.get('yandex', {}).get(col_yandex):
@@ -1100,9 +1138,11 @@ class DataSynchronizer:
                         
                         if pd.api.types.is_numeric_dtype(col_dtype):
                             value_to_set = pd.to_numeric(value_to_set, errors='coerce')
+                        
                         dfs['yandex'].at[idx, col_yandex] = value_to_set
                         filled_count += 1
-                        self._log_change('yandex', article, col_yandex, value_to_set, source_marketplace='wildberries' if source_unit == unit_wb else ('ozon' if source_unit == unit_ozon else 'yandex'))
+                        self._log_change('yandex', article, col_yandex, value_to_set, 
+                                    source_marketplace='wildberries' if source_unit == unit_wb else ('ozon' if source_unit == unit_ozon else 'yandex'))
                     except Exception:
                         pass
         
