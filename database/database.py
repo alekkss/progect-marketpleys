@@ -4,6 +4,7 @@
 import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, List
+import json
 import os
 import sys
 from pathlib import Path
@@ -75,6 +76,7 @@ class Database:
                 schema_name TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                full_comparison_json TEXT,
                 FOREIGN KEY (user_id) REFERENCES users (user_id),
                 UNIQUE(user_id, schema_name)
             )
@@ -345,60 +347,63 @@ class Database:
         return deleted
 
     def save_schema_matches(self, schema_id: int, comparison_result: Dict):
-        """Сохраняет сопоставления столбцов в схему (только с уверенностью >= 85%)"""
+        """Сохраняет все совпадения (>= 85%)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Очищаем старые сопоставления
+        # Удаляем старые записи
         cursor.execute("DELETE FROM schema_matches WHERE schema_id = ?", (schema_id,))
         
         saved_count = 0
         skipped_count = 0
         
-        # Сохраняем только совпадения с уверенностью >= 0.85
+        # Сохраняем только matches_all_three в старую таблицу
         for match in comparison_result.get('matches_all_three', []):
             confidence = match.get('confidence', 0)
-            
-            # ФИЛЬТР: только >= 85%
             if confidence >= 0.85:
-                cursor.execute("""
-                    INSERT INTO schema_matches (schema_id, wb_column, ozon_column, yandex_column, confidence, is_mandatory)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    schema_id,
-                    match.get('column_1'),
-                    match.get('column_2'),
-                    match.get('column_3'),
-                    confidence,
-                    match.get('mandatory', False)
-                ))
+                cursor.execute(
+                    "INSERT INTO schema_matches (schema_id, wb_column, ozon_column, yandex_column, confidence, is_mandatory) VALUES (?, ?, ?, ?, ?, ?)",
+                    (schema_id, match.get('column_1'), match.get('column_2'), match.get('column_3'), confidence, match.get('mandatory', False))
+                )
                 saved_count += 1
             else:
                 skipped_count += 1
         
-        # Обновляем время изменения схемы
-        cursor.execute("""
-            UPDATE schemas
-            SET updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (schema_id,))
+        # ✅ НОВОЕ: Сохраняем ВЕСЬ comparison_result как JSON
+        full_json = json.dumps(comparison_result, ensure_ascii=False)
+        cursor.execute(
+            "UPDATE schemas SET full_comparison_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (full_json, schema_id)
+        )
         
+        cursor.execute("UPDATE schemas SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (schema_id,))
         conn.commit()
         conn.close()
         
         print(f"[DB] Сохранено совпадений: {saved_count}, пропущено (confidence < 85%): {skipped_count}")
 
     def get_schema_matches(self, schema_id: int) -> Dict:
-        """Получает сопоставления столбцов из схемы"""
+        """Получает совпадения для схемы"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            SELECT wb_column, ozon_column, yandex_column, confidence, is_mandatory
-            FROM schema_matches
-            WHERE schema_id = ?
-        """, (schema_id,))
+        # ✅ НОВОЕ: Пробуем загрузить полный JSON
+        cursor.execute("SELECT full_comparison_json FROM schemas WHERE id = ?", (schema_id,))
+        row = cursor.fetchone()
         
+        if row and row[0]:
+            # Есть полный JSON - возвращаем его
+            conn.close()
+            try:
+                return json.loads(row[0])
+            except json.JSONDecodeError:
+                print(f"[DB] Ошибка парсинга JSON для схемы {schema_id}")
+        
+        # Старая логика (для схем созданных ДО обновления)
+        cursor.execute(
+            "SELECT wb_column, ozon_column, yandex_column, confidence, is_mandatory FROM schema_matches WHERE schema_id = ?",
+            (schema_id,)
+        )
         rows = cursor.fetchall()
         conn.close()
         
@@ -412,7 +417,7 @@ class Database:
                 'mandatory': row[4]
             })
         
-        # Возвращаем в формате comparison_result
+        # Возвращаем пустые массивы для парных (старые схемы)
         return {
             'matches_all_three': matches,
             'matches_1_2': [],
