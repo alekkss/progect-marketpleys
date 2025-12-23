@@ -8,6 +8,7 @@ from typing import Dict, Callable, Optional
 from datetime import datetime
 from aiogram import Bot
 from aiogram.types import FSInputFile
+from bot.keyboards import get_main_menu_keyboard
 
 from services.synchronizer import DataSynchronizer
 from services.ai_comparator import AIComparator
@@ -45,77 +46,69 @@ class BackgroundProcessor:
     ):
         """
         Обрабатывает файлы в фоновом режиме с обновлением прогресса
-        
-        Args:
-            user_id: ID пользователя
-            chat_id: ID чата для отправки сообщений
-            processing_id: ID обработки в БД
-            schema_id: ID схемы
-            file_paths: пути к загруженным файлам
-            output_paths: пути для сохранения результатов
-            report_path: путь к отчету
-            progress_message_id: ID сообщения для обновления прогресса
         """
         try:
             logger.info(f"[Processing {processing_id}] Начало фоновой обработки")
             
-            # Обновляем статус
+            # Этап 1: Загрузка схемы (5%)
             await self._update_progress(processing_id, 5, "Загрузка схемы...")
             await self._edit_progress_message(chat_id, progress_message_id, 5, "Загрузка схемы...")
             
-            # Проверка отмены
             if await self._is_cancelled(processing_id):
                 raise ProcessingCancelled("Обработка отменена пользователем")
             
-            # Загружаем схему
             comparison_result = self.db.get_schema_matches(schema_id)
+            
+            # Этап 2: Инициализация AI (10%)
             await self._update_progress(processing_id, 10, "Инициализация AI...")
             await self._edit_progress_message(chat_id, progress_message_id, 10, "Инициализация AI...")
             
-            # Создаем AI comparator
             comparator = AIComparator()
-            await self._update_progress(processing_id, 15, "Создание синхронизатора...")
-            await self._edit_progress_message(chat_id, progress_message_id, 15, "Создание синхронизатора...")
             
-            # Проверка отмены
+            # Этап 3: Создание синхронизатора (15%)
+            await self._update_progress(processing_id, 15, "Подготовка к синхронизации...")
+            await self._edit_progress_message(chat_id, progress_message_id, 15, "Подготовка к синхронизации...")
+            
             if await self._is_cancelled(processing_id):
                 raise ProcessingCancelled("Обработка отменена пользователем")
             
-            # Создаем синхронизатор
             synchronizer = DataSynchronizer(comparison_result, ai_comparator=comparator)
+            
+            # Этап 4: Синхронизация (20% → 80%)
             await self._update_progress(processing_id, 20, "Синхронизация данных...")
             await self._edit_progress_message(chat_id, progress_message_id, 20, "Синхронизация данных...")
             
-            # Запускаем синхронизацию (это долгий процесс)
-            # Периодически проверяем отмену
+            # 🆕 Запускаем синхронизацию с более частым обновлением
             sync_task = asyncio.create_task(
                 self._run_sync_with_cancel_check(
                     synchronizer, file_paths, output_paths, report_path, processing_id
                 )
             )
             
-            # Обновляем прогресс пока идет синхронизация
+            # Обновляем прогресс чаще и быстрее
             progress = 20
+            update_interval = 2  # 🔧 Уменьшено с 5 до 2 секунд
+            progress_step = 10    # 🔧 Увеличено с 5 до 10%
+            
             while not sync_task.done():
-                await asyncio.sleep(5)  # Обновляем каждые 5 секунд
+                await asyncio.sleep(update_interval)
                 
-                # Проверка отмены
                 if await self._is_cancelled(processing_id):
                     sync_task.cancel()
                     raise ProcessingCancelled("Обработка отменена пользователем")
                 
-                # Увеличиваем прогресс (до 70%)
-                progress = min(progress + 5, 70)
+                # Увеличиваем прогресс (до 80%)
+                progress = min(progress + progress_step, 80)
                 await self._update_progress(processing_id, progress, "Синхронизация данных...")
                 await self._edit_progress_message(chat_id, progress_message_id, progress, "Синхронизация данных...")
             
             # Получаем результат
             synced_dfs, changes_log = await sync_task
             
-            await self._update_progress(processing_id, 75, "Создание отчета...")
-            await self._edit_progress_message(chat_id, progress_message_id, 75, "Создание отчета...")
+            # Этап 5: Создание отчета (85%)
+            await self._update_progress(processing_id, 85, "Создание отчета...")
+            await self._edit_progress_message(chat_id, progress_message_id, 85, "Создание отчета...")
             
-            # Проверка отмены
             if await self._is_cancelled(processing_id):
                 raise ProcessingCancelled("Обработка отменена пользователем")
             
@@ -128,18 +121,18 @@ class BackgroundProcessor:
                 logger.info(f"AI-логов найдено: {len(synchronizer.ai_validation_log)}")
                 synchronizer._create_ai_log_sheet_in_report(report_path)
             
-            await self._update_progress(processing_id, 85, "Подсчет результатов...")
-            await self._edit_progress_message(chat_id, progress_message_id, 85, "Подсчет результатов...")
+            # Этап 6: Подсчет результатов (90%)
+            await self._update_progress(processing_id, 90, "Подготовка файлов...")
+            await self._edit_progress_message(chat_id, progress_message_id, 90, "Подготовка файлов...")
             
-            # Подсчитываем результаты
             wb_count = len(synced_dfs['wildberries'])
             ozon_count = len(synced_dfs['ozon'])
             yandex_count = len(synced_dfs['yandex'])
             total_synced = sum(len(changes_log[mp]) for mp in changes_log)
             
-            # Завершаем обработку
             self.db.complete_processing(processing_id, wb_count, ozon_count, yandex_count, total_synced)
             
+            # Этап 7: Отправка файлов (95%)
             await self._update_progress(processing_id, 95, "Отправка файлов...")
             await self._edit_progress_message(chat_id, progress_message_id, 95, "Отправка файлов...")
             
@@ -156,6 +149,7 @@ class BackgroundProcessor:
                 caption="📊 Отчет о синхронизации"
             )
             
+            # Этап 8: Завершено (100%)
             await self._update_progress(processing_id, 100, "Завершено")
             
             # Финальное сообщение
@@ -173,6 +167,13 @@ class BackgroundProcessor:
                 parse_mode="HTML"
             )
             
+            # 🆕 ДОБАВЬ: Возвращаем главное меню
+            await self.bot.send_message(
+                chat_id=chat_id,
+                text="Что дальше? 👇",
+                reply_markup=get_main_menu_keyboard()
+            )
+
             logger.info(f"[Processing {processing_id}] Обработка завершена успешно")
             
         except ProcessingCancelled as e:
@@ -185,6 +186,13 @@ class BackgroundProcessor:
                 text="⏹ <b>Обработка отменена</b>",
                 parse_mode="HTML"
             )
+
+            # 🆕 НОВОЕ: Возвращаем главное меню
+            await self.bot.send_message(
+                chat_id=chat_id,
+                text="Главное меню:",
+                reply_markup=get_main_menu_keyboard()
+            )
             
         except Exception as e:
             logger.error(f"[Processing {processing_id}] Ошибка: {e}", exc_info=True)
@@ -195,6 +203,13 @@ class BackgroundProcessor:
                 message_id=progress_message_id,
                 text=f"❌ <b>Ошибка при обработке:</b>\n\n<code>{str(e)}</code>",
                 parse_mode="HTML"
+            )
+
+            # 🆕 НОВОЕ: Возвращаем главное меню
+            await self.bot.send_message(
+                chat_id=chat_id,
+                text="Главное меню:",
+                reply_markup=get_main_menu_keyboard()
             )
         
         finally:
