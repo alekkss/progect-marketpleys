@@ -291,8 +291,7 @@ class Database:
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT id, schema_name, created_at, updated_at,
-                (SELECT COUNT(*) FROM schema_matches WHERE schema_id = schemas.id) as matches_count
+            SELECT id, schema_name, created_at, updated_at, full_comparison_json
             FROM schemas
             WHERE user_id = ?
             ORDER BY updated_at DESC
@@ -303,12 +302,21 @@ class Database:
         
         schemas = []
         for row in rows:
+            # Считаем количество matches из JSON
+            matches_count = 0
+            if row[4]:  # full_comparison_json
+                try:
+                    comparison_data = json.loads(row[4])
+                    matches_count = len(comparison_data.get('matches_all_three', []))
+                except json.JSONDecodeError:
+                    pass
+            
             schemas.append({
                 'id': row[0],
                 'name': row[1],
                 'created_at': row[2],
                 'updated_at': row[3],
-                'matches_count': row[4]
+                'matches_count': matches_count
             })
         
         return schemas
