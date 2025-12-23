@@ -25,7 +25,7 @@ from bot.handlers.common import cmd_start
 
 from config.config import FILE_CONFIGS
 from utils.excel_writer import ExcelWriter
-from services.data_synchronizer import DataSynchronizer
+from services.synchronizer import DataSynchronizer
 from services.ai_comparator import AIComparator
 from utils.logger_config import setup_logger
 
