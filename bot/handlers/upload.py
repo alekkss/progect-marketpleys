@@ -4,7 +4,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
+import asyncio
 import os
 import logging
 from datetime import datetime
@@ -122,14 +122,14 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
 
 
 async def process_files(message: types.Message, state: FSMContext, bot):
-    """Обработка файлов по схеме"""
+    """Обрабатывает файлы (запускает в фоновом режиме)"""
     user_id = message.from_user.id
     
     if user_id not in user_files or len(user_files[user_id]) != 3:
-        await message.answer("❌ Загрузи 3 файла!")
+        await message.answer("⚠️ Загрузите все 3 файла!")
         return
     
-    # Получаем выбранную схему
+    # Получаем данные из состояния
     data = await state.get_data()
     schema_id = data.get('selected_schema_id')
     
@@ -137,102 +137,99 @@ async def process_files(message: types.Message, state: FSMContext, bot):
         await message.answer("❌ Схема не выбрана!")
         return
     
+    # Создаем ID обработки
     processing_id = db.start_processing(user_id)
-    await message.answer("⏳ Обработка по схеме...")
     
-    try:
-        file_paths = user_files[user_id]
-        
-        # Добавляем файлы в БД
-        for marketplace, file_path in file_paths.items():
-            db.add_file(user_id, processing_id, marketplace, os.path.basename(file_path), file_path)
-        
-        await message.answer("📖 Читаю файлы...")
-        
-        # Получаем сопоставления из схемы
-        comparison_result = db.get_schema_matches(schema_id)
-        
-        await message.answer(
-            f"🔄 Синхронизирую по схеме ({len(comparison_result['matches_all_three'])} столбцов)..."
+    # Отправляем начальное сообщение с прогрессом
+    progress_msg = await message.answer(
+        "⏳ <b>Начинаю обработку...</b>\n\n"
+        "▱▱▱▱▱▱▱▱▱▱ 0%",
+        parse_mode="HTML"
+    )
+    
+    # Подготавливаем пути
+    file_paths = user_files[user_id]
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    output_dir = f"output/{user_id}_{timestamp}"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    output_sync_paths = {
+        'wildberries': f"{output_dir}/WB.xlsx",
+        'ozon': f"{output_dir}/Ozon.xlsx",
+        'yandex': f"{output_dir}/Яндекс.xlsx"
+    }
+    report_path = f"{output_dir}/Отчет_{timestamp}.xlsx"
+    
+    # Регистрируем файлы в БД
+    for marketplace, filepath in file_paths.items():
+        db.add_file(user_id, processing_id, marketplace, 
+                   os.path.basename(filepath), filepath)
+    
+    # 🆕 Запускаем обработку в фоне
+    from services.processor import BackgroundProcessor
+    processor = BackgroundProcessor(bot, db)
+    
+    # Создаем задачу
+    task = asyncio.create_task(
+        processor.process_files(
+            user_id=user_id,
+            chat_id=message.chat.id,
+            processing_id=processing_id,
+            schema_id=schema_id,
+            file_paths=file_paths,
+            output_paths=output_sync_paths,
+            report_path=report_path,
+            progress_message_id=progress_msg.message_id
         )
-        
-        # Создаем AI comparator для validation проверок
-        comparator = AIComparator()
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = f"output/{user_id}_{timestamp}"
-        os.makedirs(output_dir, exist_ok=True)
-        
-        output_sync_paths = {
-            'wildberries': f"{output_dir}/WB_синхронизировано.xlsx",
-            'ozon': f"{output_dir}/Ozon_синхронизировано.xlsx",
-            'yandex': f"{output_dir}/Яндекс_синхронизировано.xlsx"
-        }
-        
-        report_path = f"{output_dir}/результат_{timestamp}.xlsx"
-        
-        # Синхронизация
-        synchronizer = DataSynchronizer(comparison_result, ai_comparator=comparator)
-        synced_dfs, changes_log = synchronizer.synchronize_data(
-            file_paths,
-            output_sync_paths,
-            report_path=report_path
-        )
-        
-        await message.answer("📊 Создаю отчет...")
-        
-        writer = ExcelWriter()
-        writer.create_report_with_changes(comparison_result, changes_log, report_path)
-        
-        # Добавляем AI-логи если есть
-        if hasattr(synchronizer, 'ai_validation_log') and synchronizer.ai_validation_log:
-            logger.info(f"📋 Создаю лист с AI-логами ({len(synchronizer.ai_validation_log)} записей)...")
-            synchronizer._create_ai_log_sheet_in_report(report_path)
-        
-        # Статистика
-        wb_count = len(synced_dfs['wildberries'])
-        ozon_count = len(synced_dfs['ozon'])
-        yandex_count = len(synced_dfs['yandex'])
-        total_synced = sum(len(changes_log[mp]) for mp in changes_log)
-        
-        db.complete_processing(processing_id, wb_count, ozon_count, yandex_count, total_synced)
-        
-        await message.answer("📤 Отправляю результаты...")
-        
-        # Отправляем файлы
-        for marketplace, path in output_sync_paths.items():
-            doc = FSInputFile(path)
-            await message.answer_document(doc)
-        
-        report_doc = FSInputFile(report_path)
-        await message.answer_document(report_doc, caption="📊 Отчет")
-        
-        # Очистка
-        user_files[user_id] = {}
-        await state.clear()
-        
-        await message.answer(
-            f"✅ Готово!\n\n"
-            f"📦 Обработано товаров:\n"
-            f"• WB: {wb_count}\n"
-            f"• Ozon: {ozon_count}\n"
-            f"• Яндекс: {yandex_count}\n\n"
-            f"🔄 Синхронизировано ячеек: {total_synced}",
-            reply_markup=get_main_menu_keyboard()
-        )
-        
-    except Exception as e:
-        db.fail_processing(processing_id, str(e))
-        await message.answer(f"❌ Ошибка: {str(e)}")
-        logging.error(f"Error: {e}", exc_info=True)
+    )
+    
+    # Сохраняем задачу
+    processor.active_tasks[processing_id] = task
+    
+    # Очищаем состояние
+    user_files[user_id] = {}
+    await state.clear()
 
+
+async def cancel_processing_callback(callback: types.CallbackQuery, bot):
+    """Обрабатывает отмену обработки"""
+    # Получаем message_id из callback_data
+    message_id = int(callback.data.split('_')[1])
+    
+    # Находим processing_id по message_id (нужно сохранять маппинг)
+    # Временное решение - ищем последнюю активную обработку пользователя
+    user_id = callback.from_user.id
+    
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id FROM processing_history
+        WHERE user_id = ? AND status != 'completed' AND status != 'failed'
+        ORDER BY started_at DESC LIMIT 1
+    """, (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    
+    if result:
+        processing_id = result[0]
+        
+        # Отменяем обработку
+        from services.processor import BackgroundProcessor
+        processor = BackgroundProcessor(bot, db)
+        processor.cancel_processing(processing_id)
+        
+        await callback.answer("⏹ Отмена обработки...")
+    else:
+        await callback.answer("❌ Обработка не найдена", show_alert=True)
 
 def register_upload_handlers(dp, bot):
-    """Регистрация обработчиков загрузки"""
     from functools import partial
     
     dp.message.register(select_schema_for_upload, F.text == "📤 Загрузить файлы")
     dp.message.register(partial(schema_selected, bot=bot), UploadStates.selecting_schema)
     dp.message.register(partial(handle_file, bot=bot), UploadStates.waiting_for_files, F.document)
-    dp.message.register(partial(process_files, bot=bot), F.text == "🚀 Обработать")
+    dp.message.register(partial(process_files, bot=bot), F.text == "✅ Обработать файлы")
+    
+    # 🆕 Добавь обработчик отмены
+    dp.callback_query.register(partial(cancel_processing_callback, bot=bot), F.data.startswith("cancel_"))
 

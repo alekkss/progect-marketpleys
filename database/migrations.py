@@ -128,6 +128,41 @@ class Migration002RemoveLegacyTable(Migration):
         
         logger.info(f"[Migration {self.version}] Откат завершен (таблица создана без данных)")
 
+class Migration003AddProcessingProgress(Migration):
+    """Добавление полей для отслеживания прогресса"""
+    
+    version = 3
+    description = "Добавление progress и can_cancel в processing_history"
+    
+    def up(self, cursor: sqlite3.Cursor):
+        """Добавляем поля"""
+        logger.info(f"[Migration {self.version}] {self.description}")
+        
+        # Проверяем существование столбцов
+        cursor.execute("PRAGMA table_info(processing_history)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'progress' not in columns:
+            cursor.execute("""
+                ALTER TABLE processing_history 
+                ADD COLUMN progress INTEGER DEFAULT 0
+            """)
+            logger.info("  ✅ Добавлено поле: progress")
+        
+        if 'can_cancel' not in columns:
+            cursor.execute("""
+                ALTER TABLE processing_history 
+                ADD COLUMN can_cancel BOOLEAN DEFAULT 1
+            """)
+            logger.info("  ✅ Добавлено поле: can_cancel")
+        
+        logger.info(f"[Migration {self.version}] Завершена успешно")
+    
+    def down(self, cursor: sqlite3.Cursor):
+        """SQLite не поддерживает DROP COLUMN, создаем таблицу заново"""
+        logger.info(f"[Migration {self.version}] Откат миграции")
+        logger.warning("  ⚠️ SQLite не поддерживает DROP COLUMN")
+        logger.warning("  ℹ️ Поля останутся, но не будут использоваться")
 
 class MigrationManager:
     """Менеджер миграций"""
@@ -136,7 +171,8 @@ class MigrationManager:
         self.db_path = db_path
         self.migrations: List[Migration] = [
             Migration001AddIndexes(),
-            Migration002RemoveLegacyTable()
+            Migration002RemoveLegacyTable(),
+            Migration003AddProcessingProgress()
         ]
         self._init_migrations_table()
     
