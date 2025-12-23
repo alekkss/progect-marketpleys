@@ -4,9 +4,11 @@
 import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, List
+from database.migrations import MigrationManager
 import json
 import os
 import sys
+
 from pathlib import Path
 from utils.logger_config import setup_logger
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -15,6 +17,10 @@ class Database:
     def __init__(self, db_path: str = "marketplace_sync.db"):
         self.db_path = db_path
         self.init_db()
+
+        # 🆕 НОВОЕ: Применяем миграции автоматически
+        migration_manager = MigrationManager(db_path)
+        migration_manager.migrate()
     
     def get_connection(self):
         return sqlite3.connect(self.db_path)
