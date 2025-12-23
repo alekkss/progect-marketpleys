@@ -691,23 +691,55 @@ class DataSynchronizer:
         return converted_count
     
     def _save_results(self, synced_dfs: Dict[str, pd.DataFrame], output_paths: Dict[str, str]):
-        """Сохраняет результаты с сохранением форматов"""
-        from utils.excel_writer import ExcelWriter
-        writer = ExcelWriter()
+        """Сохраняет результаты с сохранением форматов и validation"""
+        from openpyxl import load_workbook
+        from openpyxl.utils.dataframe import dataframe_to_rows
         
         for marketplace, output_path in output_paths.items():
-            if marketplace in synced_dfs:
-                original_path = self.original_file_paths.get(marketplace)
-                if original_path:
-                    config = FILE_CONFIGS[marketplace]
-                    writer.save_with_formatting(
-                        synced_dfs[marketplace],
-                        original_path,
-                        output_path,
-                        config['sheet_name'],
-                        config['header_row']
-                    )
-                    logger.info(f"✅ Сохранен: {output_path}")
+            if marketplace not in synced_dfs:
+                continue
+            
+            original_path = self.original_file_paths.get(marketplace)
+            if not original_path:
+                logger.warning(f"⚠️ Оригинальный путь для {marketplace} не найден, пропускаю")
+                continue
+            
+            try:
+                config = FILE_CONFIGS[marketplace]
+                
+                # Загружаем оригинальный файл для сохранения форматирования
+                wb = load_workbook(original_path)
+                ws = wb[config['sheet_name']]
+                
+                # Получаем DataFrame
+                df = synced_dfs[marketplace]
+                
+                # Определяем начальную строку данных
+                data_start_row = config.get('data_start_row', config['header_row'] + 1)
+                
+                # Очищаем старые данные (оставляем заголовки)
+                ws.delete_rows(data_start_row, ws.max_row - data_start_row + 1)
+                
+                # Записываем новые данные
+                for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=False), start=data_start_row):
+                    for c_idx, value in enumerate(row, start=1):
+                        # Записываем значение в ячейку
+                        cell = ws.cell(row=r_idx, column=c_idx)
+                        cell.value = value
+                
+                # Сохраняем файл
+                wb.save(output_path)
+                logger.info(f"✅ Сохранен: {output_path}")
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка сохранения {marketplace}: {e}")
+                
+                # Fallback: сохраняем как простой Excel без форматирования
+                try:
+                    df.to_excel(output_path, index=False, sheet_name=config['sheet_name'])
+                    logger.info(f"⚠️ Сохранен без форматирования: {output_path}")
+                except Exception as e2:
+                    logger.error(f"❌ Критическая ошибка сохранения {marketplace}: {e2}")
     
     def _log_change(self, marketplace: str, article: str, column: str, new_value, source_marketplace: str = None):
         """Логирует изменение"""
