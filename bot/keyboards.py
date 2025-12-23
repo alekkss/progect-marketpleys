@@ -54,7 +54,7 @@ def get_cancel_keyboard():
 def get_process_keyboard():
     """Кнопка обработки"""
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="🚀 Обработать")]],
+        keyboard=[[KeyboardButton(text="✅ Обработать файлы")]],
         resize_keyboard=True
     )
 

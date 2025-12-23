@@ -123,7 +123,10 @@ async def handle_file(message: types.Message, state: FSMContext, bot):
 
 async def process_files(message: types.Message, state: FSMContext, bot):
     """Обрабатывает файлы (запускает в фоновом режиме)"""
+
+
     user_id = message.from_user.id
+
     
     if user_id not in user_files or len(user_files[user_id]) != 3:
         await message.answer("⚠️ Загрузите все 3 файла!")
@@ -228,8 +231,14 @@ def register_upload_handlers(dp, bot):
     dp.message.register(select_schema_for_upload, F.text == "📤 Загрузить файлы")
     dp.message.register(partial(schema_selected, bot=bot), UploadStates.selecting_schema)
     dp.message.register(partial(handle_file, bot=bot), UploadStates.waiting_for_files, F.document)
-    dp.message.register(partial(process_files, bot=bot), F.text == "✅ Обработать файлы")
     
-    # 🆕 Добавь обработчик отмены
+    # 🔧 ИСПРАВЛЕНИЕ: добавь состояние
+    dp.message.register(
+        partial(process_files, bot=bot), 
+        UploadStates.waiting_for_files,  # 🆕 ДОБАВЬ ЭТУ СТРОКУ
+        F.text == "✅ Обработать файлы"
+    )
+    
+    # Обработчик отмены
     dp.callback_query.register(partial(cancel_processing_callback, bot=bot), F.data.startswith("cancel_"))
 
