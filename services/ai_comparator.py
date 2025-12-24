@@ -15,6 +15,8 @@ from config.config import (
 )
 from utils.logger_config import setup_logger
 from utils.excel_reader import ExcelReader
+import httpx
+from config.config import Config
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -24,11 +26,29 @@ class AIComparator:
     """Класс для сравнения столбцов с использованием AI"""
     
     def __init__(self):
-        """Инициализация клиента OpenAI"""
-        self.client = OpenAI(
-            base_url=OPENROUTER_BASE_URL,
-            api_key=OPENROUTER_API_KEY,
-        )
+        """Инициализация AI компаратора с поддержкой прокси"""
+        
+        # Создаем HTTP клиент с прокси если включено
+        if Config.PROXY_ENABLED and Config.PROXY_URL:
+            print(f"[🔒] Используется прокси для OpenRouter API")
+            http_client = httpx.Client(
+                proxy=Config.PROXY_URL,  # Единственное число!
+                timeout=120.0
+            )
+            
+            self.client = OpenAI(
+                api_key=Config.OPENROUTER_API_KEY,
+                base_url=Config.OPENROUTER_BASE_URL,
+                http_client=http_client
+            )
+        else:
+            print("[⚠️] Прокси не настроен, прямое подключение")
+            self.client = OpenAI(
+                api_key=Config.OPENROUTER_API_KEY,
+                base_url=Config.OPENROUTER_BASE_URL
+            )
+        
+        self.model = Config.AI_MODEL
     
     def compare_columns(
         self, 

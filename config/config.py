@@ -138,6 +138,10 @@ class Config:
         """
         required_fields = [cls.OPENROUTER_API_KEY, cls.TELEGRAM_BOT_TOKEN]
         return all(field for field in required_fields)
+    
+    # Прокси настройки
+    PROXY_ENABLED: bool = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+    PROXY_URL: str = os.getenv("PROXY_URL", "")
 
 
 class ColumnValidator:
@@ -176,3 +180,5 @@ FILE_CONFIGS = Config.FILE_CONFIGS
 MANDATORY_MATCHES = Config.MANDATORY_MATCHES
 EXCLUDED_COLUMNS = Config.EXCLUDED_COLUMNS
 is_excluded_column = ColumnValidator.is_excluded_column
+PROXY_ENABLED = Config.PROXY_ENABLED
+PROXY_URL = Config.PROXY_URL
