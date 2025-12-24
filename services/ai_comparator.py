@@ -15,112 +15,134 @@ from config.config import (
 )
 from utils.logger_config import setup_logger
 from utils.excel_reader import ExcelReader
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
+import logging
 import httpx
 from config.config import Config
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+logger = setup_logger('ai_comparator')
+
+class AIComparatorError(Exception):
+    """Базовое исключение для AIComparator"""
+    pass
+
+
+class AIConnectionError(AIComparatorError):
+    """Ошибка подключения к AI API"""
+    pass
+
+
+class AIResponseError(AIComparatorError):
+    """Ошибка парсинга ответа AI"""
+    pass
 
 class AIComparator:
     """Класс для сравнения столбцов с использованием AI"""
     
     def __init__(self):
-        """Инициализация AI компаратора с поддержкой прокси"""
-        
-        # Создаем HTTP клиент с прокси если включено
-        if Config.PROXY_ENABLED and Config.PROXY_URL:
-            print(f"[🔒] Используется прокси для OpenRouter API")
-            http_client = httpx.Client(
-                proxy=Config.PROXY_URL,  # Единственное число!
-                timeout=120.0
-            )
+        """Инициализация OpenAI клиента с прокси и timeout"""
+        try:
+            if Config.PROXY_ENABLED and Config.PROXY_URL:
+                logger.info(f"🔄 Использование прокси: {Config.PROXY_URL}")
+                http_client = httpx.Client(
+                    proxy=Config.PROXY_URL,
+                    timeout=120.0
+                )
+                self.client = OpenAI(
+                    api_key=Config.OPENROUTER_API_KEY,
+                    base_url=Config.OPENROUTER_BASE_URL,
+                    http_client=http_client
+                )
+            else:
+                logger.info("🌐 Прямое подключение к OpenRouter API")
+                self.client = OpenAI(
+                    api_key=Config.OPENROUTER_API_KEY,
+                    base_url=Config.OPENROUTER_BASE_URL
+                )
             
-            self.client = OpenAI(
-                api_key=Config.OPENROUTER_API_KEY,
-                base_url=Config.OPENROUTER_BASE_URL,
-                http_client=http_client
-            )
-        else:
-            print("[⚠️] Прокси не настроен, прямое подключение")
-            self.client = OpenAI(
-                api_key=Config.OPENROUTER_API_KEY,
-                base_url=Config.OPENROUTER_BASE_URL
-            )
-        
-        self.model = Config.AI_MODEL
+            self.model = Config.AI_MODEL
+            logger.info(f"✅ AI клиент инициализирован (модель: {self.model})")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации AI клиента: {e}", exc_info=True)
+            raise AIComparatorError(f"Не удалось инициализировать AI: {e}")
     
-    def compare_columns(
-        self, 
-        columns_1: List[str], 
-        columns_2: List[str], 
-        columns_3: List[str]
-    ) -> Dict:
+    def compare_columns(self, columns_1: List[str], columns_2: List[str], columns_3: List[str]) -> Dict:
         """
-        Сравнивает столбцы из трех файлов с помощью AI (с двойной проверкой)
-        
-        Args:
-            columns_1: столбцы из первого файла
-            columns_2: столбцы из второго файла
-            columns_3: столбцы из третьего файла
-        
-        Returns:
-            Словарь с результатами сравнения
+        Сопоставляет столбцы из трёх файлов с использованием AI
         """
-        # НОВОЕ: Фильтруем исключенные столбцы
-        filtered_1, excluded_1 = self._filter_excluded_columns(columns_1)
-        filtered_2, excluded_2 = self._filter_excluded_columns(columns_2)
-        filtered_3, excluded_3 = self._filter_excluded_columns(columns_3)
-        
-        if excluded_1 or excluded_2 or excluded_3:
-            print(f"\n[!] Исключены из сравнения:")
-            if excluded_1:
-                print(f"    WB: {', '.join(excluded_1)}")
-            if excluded_2:
-                print(f"    Ozon: {', '.join(excluded_2)}")
-            if excluded_3:
-                print(f"    Яндекс: {', '.join(excluded_3)}")
-        
-        print("\n[*] Отправляю ПЕРВЫЙ запрос в OpenRouter AI...")
-        
-        # Первый проход (с отфильтрованными столбцами)
-        prompt = self._build_prompt(filtered_1, filtered_2, filtered_3)
-        response = self._call_ai(prompt)
-        result = self._parse_response(response)
-        result = self._add_mandatory_matches(result, filtered_1, filtered_2, filtered_3)
-        
-        print(f"[+] Первый проход завершен!")
-        print(f"    Найдено совпадений (все 3): {len(result.get('matches_all_three', []))}")
-        print(f"    Найдено совпадений (1-2): {len(result.get('matches_1_2', []))}")
-        print(f"    Найдено совпадений (1-3): {len(result.get('matches_1_3', []))}")
-        print(f"    Найдено совпадений (2-3): {len(result.get('matches_2_3', []))}")
-        
-        # Второй проход - проверяем оставшиеся несовпавшие столбцы
-        print("\n[*] Запускаю ВТОРОЙ проход для проверки оставшихся столбцов...")
-        remaining_columns = self._get_remaining_columns(result, filtered_1, filtered_2, filtered_3)
-        
-        if remaining_columns[0] or remaining_columns[1] or remaining_columns[2]:
-            print(f"    Осталось проверить: WB={len(remaining_columns[0])}, "
-                  f"Ozon={len(remaining_columns[1])}, Яндекс={len(remaining_columns[2])}")
+        try:
+            logger.info("=" * 60)
+            logger.info("🚀 НАЧАЛО AI-СОПОСТАВЛЕНИЯ СТОЛБЦОВ")
+            logger.info("=" * 60)
             
-            second_result = self._second_pass_comparison(remaining_columns)
+            # Фильтрация исключенных столбцов
+            filtered_1, excluded_1 = self._filter_excluded_columns(columns_1)
+            filtered_2, excluded_2 = self._filter_excluded_columns(columns_2)
+            filtered_3, excluded_3 = self._filter_excluded_columns(columns_3)
             
-            # Объединяем результаты
-            result = self._merge_results(result, second_result)
+            if excluded_1 or excluded_2 or excluded_3:
+                logger.info("⚠️ Исключены столбцы:")
+                if excluded_1:
+                    logger.info(f"  WB: {', '.join(excluded_1)}")
+                if excluded_2:
+                    logger.info(f"  Ozon: {', '.join(excluded_2)}")
+                if excluded_3:
+                    logger.info(f"  Яндекс: {', '.join(excluded_3)}")
             
-            print(f"[+] Второй проход завершен!")
-            print(f"    Дополнительно найдено совпадений (все 3): {len(second_result.get('matches_all_three', []))}")
-            print(f"    Дополнительно найдено совпадений (1-2): {len(second_result.get('matches_1_2', []))}")
-            print(f"    Дополнительно найдено совпадений (1-3): {len(second_result.get('matches_1_3', []))}")
-            print(f"    Дополнительно найдено совпадений (2-3): {len(second_result.get('matches_2_3', []))}")
-        else:
-            print("    Все столбцы уже сопоставлены, второй проход не требуется")
-        
-        # НОВОЕ: Добавляем исключенные столбцы в результат
-        result = self._add_excluded_to_result(result, excluded_1, excluded_2, excluded_3)
-        
-        print("\n[+] Итоговые результаты получены от AI")
-        return result
+            logger.info("📡 Отправка запроса в OpenRouter API...")
+            
+            # Первый проход
+            prompt = self._build_prompt(filtered_1, filtered_2, filtered_3)
+            response = self._call_ai_with_retry(prompt)  # 🔧 ИЗМЕНЕНО: добавлен retry
+            result = self._parse_response(response)
+            
+            # Добавление обязательных совпадений
+            result = self._add_mandatory_matches(result, filtered_1, filtered_2, filtered_3)
+            
+            logger.info("✅ Первый проход завершен!")
+            logger.info(f"  📊 Тройные: {len(result.get('matches_all_three', []))}")
+            logger.info(f"  📊 Парные 1-2: {len(result.get('matches_1_2', []))}")
+            logger.info(f"  📊 Парные 1-3: {len(result.get('matches_1_3', []))}")
+            logger.info(f"  📊 Парные 2-3: {len(result.get('matches_2_3', []))}")
+            
+            # Второй проход
+            logger.info("-" * 60)
+            logger.info("🔄 ВТОРОЙ ПРОХОД")
+            
+            remaining_columns = self._get_remaining_columns(result, filtered_1, filtered_2, filtered_3)
+            
+            if remaining_columns[0] or remaining_columns[1] or remaining_columns[2]:
+                logger.info(f"📋 Осталось: WB={len(remaining_columns[0])}, Ozon={len(remaining_columns[1])}, Яндекс={len(remaining_columns[2])}")
+                second_result = self._second_pass_comparison(remaining_columns)
+                result = self._merge_results(result, second_result)
+            else:
+                logger.info("✅ Все столбцы сопоставлены в первом проходе")
+            
+            # Добавление исключенных
+            result = self._add_excluded_to_result(result, excluded_1, excluded_2, excluded_3)
+            
+            logger.info("=" * 60)
+            logger.info("🎉 AI-СОПОСТАВЛЕНИЕ ЗАВЕРШЕНО")
+            logger.info("=" * 60)
+            
+            return result
+            
+        except AIComparatorError as e:
+            logger.error(f"❌ Ошибка AI: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"❌ Неожиданная ошибка: {e}", exc_info=True)
+            raise AIComparatorError(f"Критическая ошибка: {e}")
     
     def _filter_excluded_columns(self, columns: List[str]) -> tuple:
         """
@@ -311,7 +333,7 @@ class AIComparator:
     - Confidence должен быть 0.8-1.0 для хороших совпадений
     """
         
-        response = self._call_ai(prompt)
+        response = self._call_ai_with_retry(prompt)
         result = self._parse_response(response)
         return result
     
@@ -469,14 +491,40 @@ class AIComparator:
 - Используй точные названия столбцов из исходных данных!
 """
     
-    def _call_ai(self, prompt: str) -> str:
-        """Вызывает AI API"""
-        response = self.client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=AI_TEMPERATURE,
-        )
-        return response.choices[0].message.content
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((AIConnectionError, httpx.TimeoutException, httpx.ConnectError)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True
+    )
+    def _call_ai_with_retry(self, prompt: str) -> str:
+        """Вызов AI API с автоматическим retry"""
+        try:
+            logger.debug(f"📤 Отправка запроса к AI (модель: {self.model})")
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=Config.AI_TEMPERATURE
+            )
+            
+            content = response.choices[0].message.content
+            logger.debug(f"📥 Получен ответ от AI ({len(content)} символов)")
+            
+            return content
+            
+        except httpx.TimeoutException as e:
+            logger.warning(f"⏱️ Timeout: {e}")
+            raise AIConnectionError(f"Превышено время ожидания: {e}")
+        
+        except httpx.ConnectError as e:
+            logger.warning(f"🔌 Ошибка подключения: {e}")
+            raise AIConnectionError(f"Не удалось подключиться: {e}")
+        
+        except Exception as e:
+            logger.error(f"❌ Ошибка AI API: {e}", exc_info=True)
+            raise AIConnectionError(f"Ошибка AI API: {e}")
     
     def _parse_response(self, response_text: str) -> Dict:
         """Парсит ответ от AI"""
@@ -584,7 +632,7 @@ class AIComparator:
     Ответь ТОЛЬКО названием из списка или "НЕТ_СОВПАДЕНИЯ", без объяснений."""
 
         try:
-            response = self._call_ai(prompt)
+            response = self._call_ai_with_retry(prompt)
             matched = response.strip()
             
             # Проверяем что AI вернул что-то из списка
